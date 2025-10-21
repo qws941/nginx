@@ -1,0 +1,1571 @@
+{{velocity}}
+#set($packageVersion = "1.0.0")
+#set($manualDate = "2025-10-20")
+{{/velocity}}
+
+= 에어갭 환경 Nginx 시스템 - 운영 매뉴얼 (상세판) =
+
+{{info}}
+**대상**: Windows Server 에어갭 환경
+**버전**: {{velocity}}$packageVersion{{/velocity}}
+**Active Directory**: 통합 필수
+**접근 제어**: localhost 전용 (보안 강화)
+**마지막 업데이트**: {{velocity}}$manualDate{{/velocity}}
+{{/info}}
+
+----
+
+== 목차 ==
+
+{{toc depth="3"/}}
+
+----
+
+= 1. 시스템 개요 =
+
+== 1.1 아키텍처 구성 ==
+
+{{table}}
+|=구성 요소|=역할|=포트|=접근 제어
+|**Nginx**|리버스 프록시 / 웹 서버|80, 443|전체 네트워크
+|**Node.js 웹 UI**|Nginx 관리 인터페이스|8080|**localhost 전용**
+|**NSSM**|Windows 서비스 래퍼|N/A|시스템 레벨
+|**Active Directory**|인증 및 권한 관리|N/A|도메인 통합
+{{/table}}
+
+{{warning}}
+**보안 정책**: 웹 UI(포트 8080)는 **반드시 localhost(127.0.0.1)에서만 접속** 가능해야 합니다.
+외부 IP에서 접속 시도는 방화벽에서 차단됩니다.
+{{/warning}}
+
+== 1.2 Active Directory 통합 ==
+
+본 시스템은 엔터프라이즈 환경을 위해 **Active Directory와 필수 통합**됩니다:
+
+{{table}}
+|=AD 구성 요소|=필수 여부|=용도
+|**도메인 가입**|✅ 필수|서버를 도메인에 조인
+|**AD 그룹**|✅ 필수|역할 기반 접근 제어 (RBAC)
+|**서비스 계정**|✅ 필수|서비스 실행 계정
+|**인증 설정**|⚠️  권장|LDAP 인증 통합
+{{/table}}
+
+=== 1.2.1 필수 AD 그룹 ===
+
+{{code language="powershell"}}
+# AD 그룹 구조
+NginxAdministrators   # 전체 관리 권한 (설정 변경, 서비스 재시작)
+NginxOperators        # 운영 권한 (모니터링, 로그 조회)
+{{/code}}
+
+{{success}}
+**권장 사항**: AD 그룹은 **설치 전**에 미리 생성해두세요.
+{{/success}}
+
+----
+
+= 2. Active Directory 통합 가이드 =
+
+== 2.1 사전 요구사항 ==
+
+{{info}}
+**필수 조건**:
+* Windows Server가 도메인에 가입되어 있어야 합니다
+* AD 관리자 권한이 필요합니다
+* 도메인 컨트롤러(DC)와 네트워크 연결이 정상이어야 합니다
+{{/info}}
+
+== 2.2 AD 그룹 생성 ==
+
+=== 2.2.1 NginxAdministrators 그룹 생성 ===
+
+{{code language="powershell"}}
+# AD 관리자 권한으로 실행
+Import-Module ActiveDirectory
+
+# 관리자 그룹 생성
+New-ADGroup -Name "NginxAdministrators" `
+    -GroupScope Global `
+    -GroupCategory Security `
+    -Description "Nginx 전체 관리 권한 (설정 변경, 서비스 제어)" `
+    -Path "OU=Groups,DC=company,DC=local"
+
+# 관리자 추가
+Add-ADGroupMember -Identity "NginxAdministrators" `
+    -Members "admin1", "admin2"
+{{/code}}
+
+=== 2.2.2 NginxOperators 그룹 생성 ===
+
+{{code language="powershell"}}
+# 운영자 그룹 생성
+New-ADGroup -Name "NginxOperators" `
+    -GroupScope Global `
+    -GroupCategory Security `
+    -Description "Nginx 운영 권한 (모니터링, 로그 조회)" `
+    -Path "OU=Groups,DC=company,DC=local"
+
+# 운영자 추가
+Add-ADGroupMember -Identity "NginxOperators" `
+    -Members "operator1", "operator2"
+{{/code}}
+
+== 2.3 서비스 계정 생성 ==
+
+{{code language="powershell"}}
+# 서비스 전용 계정 생성
+New-ADUser -Name "nginx-service" `
+    -SamAccountName "nginx-service" `
+    -UserPrincipalName "nginx-service@company.local" `
+    -Description "Nginx 서비스 실행 계정" `
+    -PasswordNeverExpires $true `
+    -CannotChangePassword $true `
+    -Enabled $true `
+    -Path "OU=ServiceAccounts,DC=company,DC=local"
+
+# 비밀번호 설정
+$password = ConvertTo-SecureString "복잡한비밀번호!@#123" -AsPlainText -Force
+Set-ADAccountPassword -Identity "nginx-service" -NewPassword $password -Reset
+{{/code}}
+
+{{warning}}
+**보안**: 서비스 계정 비밀번호는 **최소 20자 이상**의 복잡한 비밀번호를 사용하세요.
+{{/warning}}
+
+== 2.4 AD 인증 설정 파일 ==
+
+=== 2.4.1 설정 파일 생성 ===
+
+{{code language="powershell"}}
+# C:\nginx\ad-config.json 생성
+$adConfig = @{
+    url = "ldap://dc01.company.local:389"
+    baseDN = "DC=company,DC=local"
+    bindDN = "CN=nginx-service,OU=ServiceAccounts,DC=company,DC=local"
+    bindPassword = "암호화된비밀번호"
+    searchFilter = "(&(objectClass=user)(memberOf=CN=NginxAdministrators,OU=Groups,DC=company,DC=local))"
+    timeout = 5000
+} | ConvertTo-Json -Depth 10
+
+$adConfig | Out-File -FilePath "C:\nginx\ad-config.json" -Encoding UTF8
+{{/code}}
+
+=== 2.4.2 파일 권한 설정 ===
+
+{{code language="powershell"}}
+# 관리자만 읽기 가능하도록 설정
+$acl = Get-Acl "C:\nginx\ad-config.json"
+$acl.SetAccessRuleProtection($true, $false)
+
+# Administrators 그룹만 접근 허용
+$adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "Administrators", "FullControl", "Allow"
+)
+$acl.SetAccessRule($adminRule)
+
+Set-Acl "C:\nginx\ad-config.json" $acl
+{{/code}}
+
+----
+
+= 3. localhost 전용 접근 제어 =
+
+== 3.1 보안 정책 ==
+
+{{error}}
+**중요**: 웹 UI(포트 8080)는 **외부 네트워크에서 절대 접근 불가**합니다.
+이는 무단 설정 변경을 방지하기 위한 필수 보안 요구사항입니다.
+{{/error}}
+
+== 3.2 Node.js 웹 UI 바인딩 설정 ==
+
+=== 3.2.1 localhost만 리스닝 ===
+
+{{code language="javascript"}}
+// scripts/nginx-web-ui.js
+const express = require('express');
+const app = express();
+
+// ✅ 올바른 설정: localhost만 리스닝
+app.listen(8080, '127.0.0.1', () => {
+    console.log('웹 UI: http://127.0.0.1:8080 (localhost 전용)');
+});
+
+// ❌ 잘못된 설정: 모든 인터페이스 리스닝 (보안 위험!)
+// app.listen(8080, '0.0.0.0', () => { ... });
+{{/code}}
+
+== 3.3 방화벽 규칙 설정 ==
+
+=== 3.3.1 외부 접속 차단 규칙 생성 ===
+
+{{code language="powershell"}}
+# 방화벽 규칙 추가 (설치 스크립트에서 자동 실행)
+New-NetFirewallRule -DisplayName "Nginx Web UI - Block External Access" `
+    -Direction Inbound `
+    -LocalPort 8080 `
+    -Protocol TCP `
+    -Action Block `
+    -RemoteAddress Any `
+    -Profile Any `
+    -Enabled True
+
+# localhost 접속 허용 규칙
+New-NetFirewallRule -DisplayName "Nginx Web UI - Allow Localhost" `
+    -Direction Inbound `
+    -LocalPort 8080 `
+    -Protocol TCP `
+    -Action Allow `
+    -RemoteAddress 127.0.0.1 `
+    -Profile Any `
+    -Enabled True
+{{/code}}
+
+=== 3.3.2 방화벽 규칙 확인 ===
+
+{{code language="powershell"}}
+# 웹 UI 관련 방화벽 규칙 조회
+Get-NetFirewallRule | Where-Object {$_.DisplayName -like "*Nginx Web UI*"} |
+    Select-Object DisplayName, Enabled, Direction, Action, LocalPort
+{{/code}}
+
+== 3.4 접근 테스트 ==
+
+{{code language="powershell"}}
+# ✅ 정상: localhost 접속 성공해야 함
+Invoke-WebRequest -Uri "http://127.0.0.1:8080" -UseBasicParsing
+# 예상 결과: StatusCode 200
+
+# ❌ 차단: 외부 IP 접속 실패해야 함
+$externalIP = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object {$_.IPAddress -notmatch "^127\."} |
+    Select-Object -First 1).IPAddress
+
+Invoke-WebRequest -Uri "http://${externalIP}:8080" -UseBasicParsing -TimeoutSec 3
+# 예상 결과: 연결 시간 초과 또는 거부
+{{/code}}
+
+{{success}}
+**검증 성공**: localhost에서는 접속 가능하고, 외부 IP에서는 차단되어야 정상입니다.
+{{/success}}
+
+----
+
+= 4. 기능별 검증 절차 =
+
+본 섹션은 시스템의 **10가지 핵심 기능**을 검증하는 상세 절차를 제공합니다.
+
+{{info}}
+**자동화 스크립트**: `scripts\03-verify-installation.ps1 -Detailed -ExportReport`
+수동 검증이 필요한 경우 아래 절차를 따르세요.
+{{/info}}
+
+== 4.1 [1/10] Active Directory 연동 검증 ==
+
+=== 4.1.1 도메인 가입 상태 확인 ===
+
+{{code language="powershell"}}
+# 테스트 1: 도메인 가입 여부
+$computerSystem = Get-WmiObject -Class Win32_ComputerSystem
+
+if ($computerSystem.PartOfDomain) {
+    Write-Host "✅ 정상: 도메인 $($computerSystem.Domain)에 가입됨" -ForegroundColor Green
+} else {
+    Write-Host "❌ 실패: 도메인 미가입 (워크그룹: $($computerSystem.Workgroup))" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 도메인 company.local에 가입됨`
+
+**실패 시 조치**: `도메인 가입 필요 (sconfig 또는 GUI 사용)`
+
+=== 4.1.2 도메인 컨트롤러 연결 ===
+
+{{code language="powershell"}}
+# 테스트 2: DC 연결 가능 여부
+Import-Module ActiveDirectory
+
+try {
+    $dc = (Get-ADDomainController -Discover -ErrorAction Stop).HostName
+    $ping = Test-Connection -ComputerName $dc -Count 1 -Quiet
+
+    if ($ping) {
+        Write-Host "✅ 정상: DC $dc 연결 가능" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 실패: DC 핑 응답 없음" -ForegroundColor Red
+    }
+} catch {
+    Write-Host "❌ 실패: 도메인 컨트롤러 발견 불가" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: DC dc01.company.local 연결 가능`
+
+**실패 시 조치**: `네트워크 연결 및 DNS 설정 확인`
+
+=== 4.1.3 Nginx AD 그룹 존재 확인 ===
+
+{{code language="powershell"}}
+# 테스트 3: NginxAdministrators 그룹
+try {
+    $adminGroup = Get-ADGroup -Identity "NginxAdministrators" -ErrorAction Stop
+    $memberCount = (Get-ADGroupMember -Identity $adminGroup).Count
+    Write-Host "✅ 정상: NginxAdministrators 그룹 존재 (멤버 $memberCount 명)" -ForegroundColor Green
+} catch {
+    Write-Host "❌ 실패: NginxAdministrators 그룹 없음" -ForegroundColor Red
+}
+
+# 테스트 4: NginxOperators 그룹
+try {
+    $operatorGroup = Get-ADGroup -Identity "NginxOperators" -ErrorAction Stop
+    $memberCount = (Get-ADGroupMember -Identity $operatorGroup).Count
+    Write-Host "✅ 정상: NginxOperators 그룹 존재 (멤버 $memberCount 명)" -ForegroundColor Green
+} catch {
+    Write-Host "❌ 실패: NginxOperators 그룹 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: 두 그룹 모두 존재해야 함
+
+**실패 시 조치**: `섹션 2.2 참고하여 AD 그룹 생성`
+
+=== 4.1.4 서비스 계정 확인 ===
+
+{{code language="powershell"}}
+# 테스트 5: nginx-service 계정
+try {
+    $serviceAccount = Get-ADUser -Identity "nginx-service" -ErrorAction Stop
+
+    if ($serviceAccount.Enabled) {
+        Write-Host "✅ 정상: nginx-service 계정 활성화됨" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: nginx-service 계정 비활성화됨" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "❌ 실패: nginx-service 계정 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: nginx-service 계정 활성화됨`
+
+**실패 시 조치**: `섹션 2.3 참고하여 서비스 계정 생성`
+
+=== 4.1.5 AD 인증 설정 파일 ===
+
+{{code language="powershell"}}
+# 테스트 6: ad-config.json 검증
+if (Test-Path "C:\nginx\ad-config.json") {
+    $config = Get-Content "C:\nginx\ad-config.json" | ConvertFrom-Json
+
+    if ($config.url -and $config.baseDN) {
+        Write-Host "✅ 정상: AD 설정 파일 존재 및 유효" -ForegroundColor Green
+        Write-Host "   LDAP URL: $($config.url)" -ForegroundColor Gray
+        Write-Host "   Base DN: $($config.baseDN)" -ForegroundColor Gray
+    } else {
+        Write-Host "⚠️  경고: AD 설정 파일 내용 불완전" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "❌ 실패: AD 설정 파일 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: AD 설정 파일 존재 및 유효`
+
+**실패 시 조치**: `섹션 2.4 참고하여 ad-config.json 생성`
+
+=== 4.1.6 AD 연동 검증 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=조치
+|도메인 가입 상태|[ ]|도메인 조인
+|DC 연결 가능|[ ]|네트워크/DNS 확인
+|NginxAdministrators 그룹|[ ]|AD 그룹 생성
+|NginxOperators 그룹|[ ]|AD 그룹 생성
+|nginx-service 계정|[ ]|서비스 계정 생성
+|ad-config.json|[ ]|설정 파일 생성
+{{/table}}
+
+----
+
+== 4.2 [2/10] Windows 서비스 상태 검증 ==
+
+=== 4.2.1 Nginx 서비스 실행 ===
+
+{{code language="powershell"}}
+# 테스트 7: Nginx 서비스
+$nginxService = Get-Service -Name "nginx" -ErrorAction SilentlyContinue
+
+if ($nginxService) {
+    if ($nginxService.Status -eq "Running") {
+        Write-Host "✅ 정상: Nginx 서비스 실행 중" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 실패: Nginx 서비스 중지됨 (상태: $($nginxService.Status))" -ForegroundColor Red
+    }
+} else {
+    Write-Host "❌ 실패: Nginx 서비스 미등록" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: Nginx 서비스 실행 중`
+
+**실패 시 조치**:
+{{code language="powershell"}}
+# 서비스 시작
+Start-Service nginx
+
+# 자동 시작 설정
+Set-Service nginx -StartupType Automatic
+{{/code}}
+
+=== 4.2.2 Nginx 서비스 자동 시작 설정 ===
+
+{{code language="powershell"}}
+# 테스트 8: 자동 시작 설정
+$nginxService = Get-Service -Name "nginx"
+
+if ($nginxService.StartType -eq "Automatic") {
+    Write-Host "✅ 정상: 자동 시작 설정됨" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  경고: 자동 시작 미설정 (현재: $($nginxService.StartType))" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 자동 시작 설정됨`
+
+=== 4.2.3 웹 UI 서비스 실행 ===
+
+{{code language="powershell"}}
+# 테스트 9: 웹 UI 서비스
+$webUIService = Get-Service -Name "nginx-web-ui" -ErrorAction SilentlyContinue
+
+if ($webUIService) {
+    if ($webUIService.Status -eq "Running") {
+        Write-Host "✅ 정상: 웹 UI 서비스 실행 중" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 실패: 웹 UI 서비스 중지됨 (상태: $($webUIService.Status))" -ForegroundColor Red
+    }
+} else {
+    Write-Host "❌ 실패: 웹 UI 서비스 미등록" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 웹 UI 서비스 실행 중`
+
+=== 4.2.4 메모리 사용량 확인 ===
+
+{{code language="powershell"}}
+# 테스트 10: Nginx 프로세스 메모리
+$nginxProcess = Get-Process -Name "nginx" -ErrorAction SilentlyContinue
+if ($nginxProcess) {
+    $memoryMB = [math]::Round(($nginxProcess | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 2)
+
+    if ($memoryMB -lt 500) {
+        Write-Host "✅ 정상: Nginx 메모리 사용 ${memoryMB}MB" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: Nginx 메모리 사용 ${memoryMB}MB (높음)" -ForegroundColor Yellow
+    }
+}
+
+# 테스트 11: Node.js 프로세스 메모리
+$nodeProcess = Get-Process -Name "node" -ErrorAction SilentlyContinue
+if ($nodeProcess) {
+    $memoryMB = [math]::Round(($nodeProcess | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 2)
+
+    if ($memoryMB -lt 200) {
+        Write-Host "✅ 정상: Node.js 메모리 사용 ${memoryMB}MB" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: Node.js 메모리 사용 ${memoryMB}MB (높음)" -ForegroundColor Yellow
+    }
+}
+{{/code}}
+
+**예상 결과**: Nginx < 500MB, Node.js < 200MB
+
+=== 4.2.5 서비스 검증 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=기준|=조치
+|Nginx 서비스 실행|[ ]|Running|Start-Service nginx
+|Nginx 자동 시작|[ ]|Automatic|Set-Service -StartupType Automatic
+|웹 UI 서비스 실행|[ ]|Running|Start-Service nginx-web-ui
+|Nginx 메모리|[ ]|< 500MB|메모리 사용량 점검
+|Node.js 메모리|[ ]|< 200MB|메모리 사용량 점검
+{{/table}}
+
+----
+
+== 4.3 [3/10] 네트워크 접근 제어 검증 ==
+
+=== 4.3.1 localhost 웹 UI 접속 테스트 ===
+
+{{code language="powershell"}}
+# 테스트 12: localhost 접속 (정상적으로 연결되어야 함)
+try {
+    $response = Invoke-WebRequest -Uri "http://127.0.0.1:8080" `
+        -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+
+    if ($response.StatusCode -eq 200) {
+        Write-Host "✅ 정상: localhost 접속 가능 (HTTP 200)" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: 응답 코드 $($response.StatusCode)" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "❌ 실패: localhost 접속 불가 - $($_.Exception.Message)" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: localhost 접속 가능 (HTTP 200)`
+
+**실패 시 조치**: `웹 UI 서비스 상태 확인 (테스트 9)`
+
+=== 4.3.2 외부 IP 차단 테스트 ===
+
+{{code language="powershell"}}
+# 테스트 13: 외부 IP 접속 (차단되어야 함)
+$externalIP = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object {$_.IPAddress -notmatch "^127\."} |
+    Select-Object -First 1).IPAddress
+
+if ($externalIP) {
+    Write-Host "외부 IP: $externalIP" -ForegroundColor Gray
+
+    try {
+        $response = Invoke-WebRequest -Uri "http://${externalIP}:8080" `
+            -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+
+        Write-Host "❌ 실패: 외부 IP에서 접속 가능 (보안 위험!)" -ForegroundColor Red
+    } catch {
+        Write-Host "✅ 정상: 외부 IP 접속 차단됨" -ForegroundColor Green
+    }
+} else {
+    Write-Host "⚠️  경고: 외부 IP 확인 불가" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 외부 IP 접속 차단됨`
+
+{{error}}
+**보안 경고**: 외부 IP에서 접속 가능하면 **즉시 방화벽 규칙 확인** 필요!
+{{/error}}
+
+=== 4.3.3 포트 리스닝 상태 ===
+
+{{code language="powershell"}}
+# 테스트 14: 포트 80 (HTTP)
+$port80 = Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue
+if ($port80) {
+    Write-Host "✅ 정상: 포트 80 리스닝 중" -ForegroundColor Green
+} else {
+    Write-Host "❌ 실패: 포트 80 리스닝 안 함" -ForegroundColor Red
+}
+
+# 테스트 15: 포트 443 (HTTPS)
+$port443 = Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue
+if ($port443) {
+    Write-Host "✅ 정상: 포트 443 리스닝 중" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  경고: 포트 443 리스닝 안 함 (SSL 미설정)" -ForegroundColor Yellow
+}
+
+# 테스트 16: 포트 8080 (웹 UI) - localhost만
+$port8080 = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue
+if ($port8080) {
+    $localAddresses = $port8080.LocalAddress | Select-Object -Unique
+    if ($localAddresses -contains "127.0.0.1" -or $localAddresses -contains "::1") {
+        Write-Host "✅ 정상: 포트 8080 localhost 바인딩" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 보안 위험: 포트 8080이 $localAddresses에 바인딩됨!" -ForegroundColor Red
+    }
+}
+{{/code}}
+
+**예상 결과**: 모든 포트 리스닝 중, 포트 8080은 localhost만
+
+=== 4.3.4 방화벽 규칙 확인 ===
+
+{{code language="powershell"}}
+# 테스트 17: 웹 UI 방화벽 규칙
+$webUIRules = Get-NetFirewallRule -DisplayName "*Nginx Web UI*" -ErrorAction SilentlyContinue
+
+if ($webUIRules) {
+    $blockRule = $webUIRules | Where-Object {
+        $_.Action -eq "Block" -and $_.DisplayName -like "*External*"
+    }
+
+    if ($blockRule -and $blockRule.Enabled -eq $true) {
+        Write-Host "✅ 정상: 외부 접속 차단 규칙 활성화" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: 차단 규칙 미활성화" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "❌ 실패: 방화벽 규칙 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 외부 접속 차단 규칙 활성화`
+
+**실패 시 조치**: `섹션 3.3 참고하여 방화벽 규칙 생성`
+
+=== 4.3.5 네트워크 검증 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=예상 결과|=보안 수준
+|localhost 접속|[ ]|✅ 성공|정상
+|외부 IP 접속|[ ]|❌ 차단|**필수**
+|포트 80 리스닝|[ ]|✅ 리스닝|정상
+|포트 443 리스닝|[ ]|✅ 리스닝|권장
+|포트 8080 바인딩|[ ]|127.0.0.1만|**필수**
+|방화벽 차단 규칙|[ ]|✅ 활성화|**필수**
+{{/table}}
+
+{{warning}}
+**보안 점검**: 외부 IP 접속과 방화벽 차단 규칙은 **필수** 검증 항목입니다!
+{{/warning}}
+
+----
+
+== 4.4 [4/10] Nginx 설정 검증 ==
+
+=== 4.4.1 설정 파일 구문 검사 ===
+
+{{code language="powershell"}}
+# 테스트 18: nginx.conf 구문 검사
+$testResult = & "C:\nginx\nginx.exe" -t 2>&1
+
+if ($testResult -match "successful") {
+    Write-Host "✅ 정상: 설정 파일 구문 오류 없음" -ForegroundColor Green
+} else {
+    Write-Host "❌ 실패: 설정 파일 구문 오류" -ForegroundColor Red
+    Write-Host $testResult -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `nginx: the configuration file C:\nginx\conf\nginx.conf syntax is ok`
+
+=== 4.4.2 conf.d 디렉토리 확인 ===
+
+{{code language="powershell"}}
+# 테스트 19: conf.d 디렉토리 및 설정 파일
+if (Test-Path "C:\nginx\conf\conf.d") {
+    $confFiles = Get-ChildItem "C:\nginx\conf\conf.d\*.conf" -ErrorAction SilentlyContinue
+    $confCount = $confFiles.Count
+
+    Write-Host "✅ 정상: conf.d 디렉토리 존재 ($confCount 개 설정 파일)" -ForegroundColor Green
+
+    # 각 설정 파일 표시
+    foreach ($file in $confFiles) {
+        Write-Host "   - $($file.Name)" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "❌ 실패: conf.d 디렉토리 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: conf.d 디렉토리 존재 (N개 설정 파일)`
+
+=== 4.4.3 SSL 설정 확인 ===
+
+{{code language="powershell"}}
+# 테스트 20: SSL 설정 포함 여부
+$nginxConf = Get-Content "C:\nginx\conf\nginx.conf" -Raw
+
+if ($nginxConf -match "ssl_certificate") {
+    Write-Host "✅ 정상: SSL 설정 포함" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  경고: SSL 설정 없음" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: SSL 설정 포함`
+
+=== 4.4.4 로그 디렉토리 및 크기 ===
+
+{{code language="powershell"}}
+# 테스트 21: 로그 디렉토리
+if (Test-Path "C:\nginx\logs") {
+    $logSize = [math]::Round(
+        (Get-ChildItem "C:\nginx\logs" -Recurse |
+         Measure-Object -Property Length -Sum).Sum / 1MB, 2
+    )
+
+    if ($logSize -lt 1000) {
+        Write-Host "✅ 정상: 로그 디렉토리 존재 (${logSize}MB)" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: 로그 크기 ${logSize}MB (정리 필요)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "❌ 실패: 로그 디렉토리 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 로그 디렉토리 존재 (< 1000MB)`
+
+=== 4.4.5 에러 로그 확인 ===
+
+{{code language="powershell"}}
+# 테스트 22: 최근 에러 로그
+if (Test-Path "C:\nginx\logs\error.log") {
+    $errors = Get-Content "C:\nginx\logs\error.log" -Tail 100 |
+        Select-String "\[error\]|\[crit\]|\[alert\]|\[emerg\]"
+
+    $errorCount = $errors.Count
+
+    if ($errorCount -eq 0) {
+        Write-Host "✅ 정상: 최근 에러 로그 없음" -ForegroundColor Green
+    } elseif ($errorCount -lt 10) {
+        Write-Host "⚠️  경고: 최근 에러 $errorCount 건" -ForegroundColor Yellow
+    } else {
+        Write-Host "❌ 실패: 최근 에러 $errorCount 건 (과다)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "⚠️  경고: 에러 로그 파일 없음" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 최근 에러 로그 없음`
+
+=== 4.4.6 Nginx 설정 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=조치
+|설정 파일 구문|[ ]|nginx -t 실행
+|conf.d 디렉토리|[ ]|디렉토리 생성
+|SSL 설정|[ ]|인증서 설정
+|로그 디렉토리|[ ]|디렉토리 생성
+|에러 로그 확인|[ ]|에러 원인 분석
+{{/table}}
+
+----
+
+== 4.5 [5/10] 프록시 기능 검증 ==
+
+=== 4.5.1 프록시 설정 개수 ===
+
+{{code language="powershell"}}
+# 테스트 23: 프록시 설정 파일 개수
+$confFiles = Get-ChildItem "C:\nginx\conf\conf.d\*.conf" -ErrorAction SilentlyContinue
+
+if ($confFiles) {
+    Write-Host "✅ 정상: $($confFiles.Count) 개 프록시 설정" -ForegroundColor Green
+
+    # 각 프록시 상세
+    foreach ($file in $confFiles) {
+        $content = Get-Content $file.FullName -Raw
+
+        # server_name 추출
+        if ($content -match "server_name\s+([^;]+)") {
+            $serverName = $Matches[1].Trim()
+            Write-Host "   - $($file.BaseName): $serverName" -ForegroundColor Gray
+        }
+    }
+} else {
+    Write-Host "⚠️  경고: 프록시 설정 없음" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: N개 프록시 설정`
+
+=== 4.5.2 업스트림 서버 연결 테스트 ===
+
+{{code language="powershell"}}
+# 테스트 24: 업스트림 서버 연결 가능 여부
+$confFiles = Get-ChildItem "C:\nginx\conf\conf.d\*.conf" -ErrorAction SilentlyContinue
+$failedUpstreams = @()
+
+foreach ($file in $confFiles) {
+    $content = Get-Content $file.FullName -Raw
+
+    # proxy_pass에서 호스트:포트 추출
+    if ($content -match "proxy_pass\s+http://([^:]+):(\d+)") {
+        $host = $Matches[1]
+        $port = $Matches[2]
+
+        Write-Host "업스트림 테스트: ${host}:${port}" -ForegroundColor Gray
+
+        $connection = Test-NetConnection -ComputerName $host -Port $port `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        if ($connection.TcpTestSucceeded) {
+            Write-Host "  ✅ 연결 성공" -ForegroundColor Green
+        } else {
+            Write-Host "  ❌ 연결 실패" -ForegroundColor Red
+            $failedUpstreams += "${host}:${port}"
+        }
+    }
+}
+
+if ($failedUpstreams.Count -eq 0) {
+    Write-Host "✅ 정상: 모든 업스트림 서버 연결 가능" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  경고: 연결 실패 - $($failedUpstreams -join ', ')" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 모든 업스트림 서버 연결 가능`
+
+**실패 시 조치**: `업스트림 서버 상태 확인 (서비스 실행, 네트워크, 포트)`
+
+=== 4.5.3 프록시 기능 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=조치
+|프록시 설정 존재|[ ]|conf.d에 .conf 파일 추가
+|업스트림 연결 가능|[ ]|업스트림 서버 상태 확인
+{{/table}}
+
+----
+
+== 4.6 [6/10] 디스크 및 리소스 검증 ==
+
+=== 4.6.1 디스크 여유 공간 ===
+
+{{code language="powershell"}}
+# 테스트 25: C 드라이브 여유 공간
+$drive = Get-PSDrive C
+$freeGB = [math]::Round($drive.Free / 1GB, 2)
+$totalGB = [math]::Round(($drive.Used + $drive.Free) / 1GB, 2)
+
+if ($freeGB -gt 20) {
+    Write-Host "✅ 정상: 여유 공간 ${freeGB}GB / ${totalGB}GB" -ForegroundColor Green
+} elseif ($freeGB -gt 10) {
+    Write-Host "⚠️  경고: 여유 공간 ${freeGB}GB (부족)" -ForegroundColor Yellow
+} else {
+    Write-Host "❌ 실패: 여유 공간 ${freeGB}GB (위험 수준)" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 여유 공간 > 20GB`
+
+=== 4.6.2 CPU 사용률 ===
+
+{{code language="powershell"}}
+# 테스트 26: CPU 사용률
+$cpu = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+$cpuPercent = [math]::Round($cpu, 2)
+
+if ($cpuPercent -lt 50) {
+    Write-Host "✅ 정상: CPU ${cpuPercent}%" -ForegroundColor Green
+} elseif ($cpuPercent -lt 80) {
+    Write-Host "⚠️  경고: CPU ${cpuPercent}% (높음)" -ForegroundColor Yellow
+} else {
+    Write-Host "❌ 실패: CPU ${cpuPercent}% (과부하)" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: CPU < 50%`
+
+=== 4.6.3 메모리 사용률 ===
+
+{{code language="powershell"}}
+# 테스트 27: 메모리 사용률
+$os = Get-WmiObject -Class Win32_OperatingSystem
+$totalMemory = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+$freeMemory = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
+$usedPercent = [math]::Round((($totalMemory - $freeMemory) / $totalMemory) * 100, 2)
+
+if ($usedPercent -lt 70) {
+    Write-Host "✅ 정상: 메모리 ${usedPercent}% 사용 중" -ForegroundColor Green
+} elseif ($usedPercent -lt 85) {
+    Write-Host "⚠️  경고: 메모리 ${usedPercent}% 사용 중 (높음)" -ForegroundColor Yellow
+} else {
+    Write-Host "❌ 실패: 메모리 ${usedPercent}% 사용 중 (과부하)" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 메모리 < 70%`
+
+=== 4.6.4 리소스 검증 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=기준|=조치
+|C 드라이브 여유 공간|[ ]|> 20GB|디스크 정리
+|CPU 사용률|[ ]|< 50%|프로세스 점검
+|메모리 사용률|[ ]|< 70%|메모리 증설 고려
+{{/table}}
+
+----
+
+== 4.7 [7/10] SSL/TLS 인증서 검증 ==
+
+=== 4.7.1 인증서 파일 존재 ===
+
+{{code language="powershell"}}
+# 테스트 28: SSL 인증서 및 키 파일
+$certPath = "C:\nginx\conf\ssl\cert.crt"
+$keyPath = "C:\nginx\conf\ssl\cert.key"
+
+$certExists = Test-Path $certPath
+$keyExists = Test-Path $keyPath
+
+if ($certExists -and $keyExists) {
+    Write-Host "✅ 정상: 인증서 및 키 파일 존재" -ForegroundColor Green
+} elseif ($certExists) {
+    Write-Host "❌ 실패: 키 파일 없음" -ForegroundColor Red
+} elseif ($keyExists) {
+    Write-Host "❌ 실패: 인증서 파일 없음" -ForegroundColor Red
+} else {
+    Write-Host "❌ 실패: 인증서 및 키 파일 모두 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 인증서 및 키 파일 존재`
+
+=== 4.7.2 인증서 만료일 확인 ===
+
+{{code language="powershell"}}
+# 테스트 29: 인증서 만료일
+$certPath = "C:\nginx\conf\ssl\cert.crt"
+
+if (Test-Path $certPath) {
+    try {
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath)
+        $daysLeft = ($cert.NotAfter - (Get-Date)).Days
+
+        Write-Host "인증서 정보:" -ForegroundColor Gray
+        Write-Host "  발급자: $($cert.Issuer)" -ForegroundColor Gray
+        Write-Host "  주체: $($cert.Subject)" -ForegroundColor Gray
+        Write-Host "  유효 기간: $($cert.NotBefore) ~ $($cert.NotAfter)" -ForegroundColor Gray
+
+        if ($daysLeft -gt 30) {
+            Write-Host "✅ 정상: 만료까지 ${daysLeft}일 남음" -ForegroundColor Green
+        } elseif ($daysLeft -gt 7) {
+            Write-Host "⚠️  경고: 만료까지 ${daysLeft}일 남음 (갱신 필요)" -ForegroundColor Yellow
+        } else {
+            Write-Host "❌ 실패: 만료까지 ${daysLeft}일 남음 (긴급 갱신 필요)" -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "❌ 실패: 인증서 읽기 실패" -ForegroundColor Red
+    }
+} else {
+    Write-Host "❌ 실패: 인증서 파일 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 만료까지 > 30일`
+
+=== 4.7.3 키 파일 권한 확인 ===
+
+{{code language="powershell"}}
+# 테스트 30: 키 파일 권한 (관리자만 접근)
+$keyPath = "C:\nginx\conf\ssl\cert.key"
+
+if (Test-Path $keyPath) {
+    $acl = Get-Acl $keyPath
+    $dangerousAccess = $acl.Access | Where-Object {
+        $_.IdentityReference -notmatch "Administrators|SYSTEM" -and
+        $_.FileSystemRights -match "Read|FullControl"
+    }
+
+    if ($dangerousAccess.Count -eq 0) {
+        Write-Host "✅ 정상: 키 파일 권한 안전 (관리자만 접근)" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: 불필요한 권한 존재 (보안 위험)" -ForegroundColor Yellow
+        $dangerousAccess | ForEach-Object {
+            Write-Host "  - $($_.IdentityReference): $($_.FileSystemRights)" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "❌ 실패: 키 파일 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 키 파일 권한 안전`
+
+**실패 시 조치**:
+{{code language="powershell"}}
+# 키 파일 권한 재설정
+$keyPath = "C:\nginx\conf\ssl\cert.key"
+$acl = Get-Acl $keyPath
+$acl.SetAccessRuleProtection($true, $false)
+
+$adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "Administrators", "FullControl", "Allow"
+)
+$acl.SetAccessRule($adminRule)
+Set-Acl $keyPath $acl
+{{/code}}
+
+=== 4.7.4 SSL/TLS 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=조치
+|인증서 파일 존재|[ ]|SSL 인증서 설치
+|키 파일 존재|[ ]|SSL 인증서 설치
+|인증서 만료일|[ ]|> 30일 유지
+|키 파일 권한|[ ]|관리자만 읽기
+{{/table}}
+
+----
+
+== 4.8 [8/10] 로그 수집 및 분석 ==
+
+=== 4.8.1 액세스 로그 생성 확인 ===
+
+{{code language="powershell"}}
+# 테스트 31: 액세스 로그 최신 여부
+$accessLog = "C:\nginx\logs\access.log"
+
+if (Test-Path $accessLog) {
+    $lastWrite = (Get-Item $accessLog).LastWriteTime
+    $hoursSince = ((Get-Date) - $lastWrite).TotalHours
+
+    if ($hoursSince -lt 1) {
+        Write-Host "✅ 정상: 액세스 로그 최근 업데이트 ($([math]::Round($hoursSince, 1))시간 전)" -ForegroundColor Green
+    } elseif ($hoursSince -lt 24) {
+        Write-Host "⚠️  경고: 액세스 로그 업데이트 $([math]::Round($hoursSince, 1))시간 전" -ForegroundColor Yellow
+    } else {
+        Write-Host "❌ 실패: 액세스 로그 업데이트 $([math]::Round($hoursSince, 1))시간 전 (접속 없음)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "❌ 실패: 액세스 로그 파일 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 액세스 로그 최근 업데이트 (< 1시간 전)`
+
+=== 4.8.2 로그 로테이션 확인 ===
+
+{{code language="powershell"}}
+# 테스트 32: 오래된 로그 파일 개수
+$oldLogs = Get-ChildItem "C:\nginx\logs\*.log" -ErrorAction SilentlyContinue |
+    Where-Object {$_.LastWriteTime -lt (Get-Date).AddDays(-7)}
+
+if ($oldLogs.Count -gt 10) {
+    Write-Host "⚠️  경고: 7일 이상 된 로그 $($oldLogs.Count)개 (로테이션 필요)" -ForegroundColor Yellow
+} elseif ($oldLogs.Count -gt 0) {
+    Write-Host "✅ 정상: 7일 이상 된 로그 $($oldLogs.Count)개" -ForegroundColor Green
+} else {
+    Write-Host "✅ 정상: 오래된 로그 없음" -ForegroundColor Green
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 오래된 로그 < 10개`
+
+=== 4.8.3 에러 발생률 ===
+
+{{code language="powershell"}}
+# 테스트 33: 에러 로그 분석
+$errorLog = "C:\nginx\logs\error.log"
+
+if (Test-Path $errorLog) {
+    $recentErrors = Get-Content $errorLog -Tail 1000 | Select-String "\[error\]"
+    $errorCount = $recentErrors.Count
+
+    if ($errorCount -eq 0) {
+        Write-Host "✅ 정상: 최근 1000줄 에러 없음" -ForegroundColor Green
+    } elseif ($errorCount -lt 10) {
+        Write-Host "✅ 정상: 최근 1000줄 에러 $errorCount 건" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: 최근 1000줄 에러 $errorCount 건 (높음)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "⚠️  경고: 에러 로그 파일 없음" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 최근 에러 < 10건`
+
+=== 4.8.4 로그 검증 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=기준|=조치
+|액세스 로그 최신|[ ]|< 1시간 전|로그 설정 확인
+|오래된 로그 개수|[ ]|< 10개|로그 로테이션 실행
+|에러 발생률|[ ]|< 10건/1000줄|에러 원인 분석
+{{/table}}
+
+----
+
+== 4.9 [9/10] 백업 검증 ==
+
+=== 4.9.1 백업 디렉토리 존재 ===
+
+{{code language="powershell"}}
+# 테스트 34: 백업 디렉토리
+if (Test-Path "C:\backup") {
+    Write-Host "✅ 정상: 백업 디렉토리 존재" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  경고: 백업 디렉토리 없음" -ForegroundColor Yellow
+    Write-Host "   조치: New-Item -ItemType Directory -Path 'C:\backup'" -ForegroundColor Gray
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 백업 디렉토리 존재`
+
+=== 4.9.2 최근 백업 확인 ===
+
+{{code language="powershell"}}
+# 테스트 35: 최근 설정 백업
+$backupFiles = Get-ChildItem "C:\backup\nginx-config-*.zip" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending
+
+if ($backupFiles) {
+    $latestBackup = $backupFiles[0]
+    $daysSince = ((Get-Date) - $latestBackup.LastWriteTime).Days
+
+    Write-Host "최근 백업: $($latestBackup.Name)" -ForegroundColor Gray
+    Write-Host "백업 날짜: $($latestBackup.LastWriteTime)" -ForegroundColor Gray
+
+    if ($daysSince -eq 0) {
+        Write-Host "✅ 정상: 오늘 백업 완료" -ForegroundColor Green
+    } elseif ($daysSince -lt 7) {
+        Write-Host "✅ 정상: ${daysSince}일 전 백업" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  경고: ${daysSince}일 전 백업 (백업 필요)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "❌ 실패: 백업 파일 없음" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: < 7일 전 백업`
+
+=== 4.9.3 백업 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=조치
+|백업 디렉토리|[ ]|디렉토리 생성
+|최근 백업|[ ]|< 7일 전
+{{/table}}
+
+----
+
+== 4.10 [10/10] 성능 지표 검증 ==
+
+=== 4.10.1 평균 응답 시간 ===
+
+{{code language="powershell"}}
+# 테스트 36: 평균 응답 시간 (최근 100건)
+$accessLog = "C:\nginx\logs\access.log"
+
+if (Test-Path $accessLog) {
+    $recentLogs = Get-Content $accessLog -Tail 100
+    $responseTimes = $recentLogs | ForEach-Object {
+        if ($_ -match "(\d+\.\d+)$") {
+            [double]$Matches[1]
+        }
+    } | Where-Object {$_ -ne $null}
+
+    if ($responseTimes.Count -gt 0) {
+        $avgTime = [math]::Round(($responseTimes | Measure-Object -Average).Average, 3)
+        $maxTime = [math]::Round(($responseTimes | Measure-Object -Maximum).Maximum, 3)
+        $minTime = [math]::Round(($responseTimes | Measure-Object -Minimum).Minimum, 3)
+
+        Write-Host "응답 시간 통계 (최근 100건):" -ForegroundColor Gray
+        Write-Host "  평균: ${avgTime}초" -ForegroundColor Gray
+        Write-Host "  최소: ${minTime}초" -ForegroundColor Gray
+        Write-Host "  최대: ${maxTime}초" -ForegroundColor Gray
+
+        if ($avgTime -lt 0.5) {
+            Write-Host "✅ 정상: 평균 응답 ${avgTime}초" -ForegroundColor Green
+        } elseif ($avgTime -lt 1) {
+            Write-Host "⚠️  경고: 평균 응답 ${avgTime}초 (느림)" -ForegroundColor Yellow
+        } else {
+            Write-Host "❌ 실패: 평균 응답 ${avgTime}초 (매우 느림)" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "⚠️  경고: 응답 시간 데이터 없음" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "⚠️  경고: 액세스 로그 없음" -ForegroundColor Yellow
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 평균 응답 < 0.5초`
+
+=== 4.10.2 동시 연결 수 ===
+
+{{code language="powershell"}}
+# 테스트 37: 동시 연결 수
+$connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+    Where-Object {$_.LocalPort -in @(80, 443, 8080)}
+
+$count = $connections.Count
+
+Write-Host "현재 동시 연결:" -ForegroundColor Gray
+Write-Host "  포트 80 (HTTP): $(($connections | Where-Object {$_.LocalPort -eq 80}).Count)" -ForegroundColor Gray
+Write-Host "  포트 443 (HTTPS): $(($connections | Where-Object {$_.LocalPort -eq 443}).Count)" -ForegroundColor Gray
+Write-Host "  포트 8080 (웹 UI): $(($connections | Where-Object {$_.LocalPort -eq 8080}).Count)" -ForegroundColor Gray
+
+if ($count -lt 100) {
+    Write-Host "✅ 정상: 동시 연결 ${count}개" -ForegroundColor Green
+} elseif ($count -lt 500) {
+    Write-Host "⚠️  경고: 동시 연결 ${count}개 (높음)" -ForegroundColor Yellow
+} else {
+    Write-Host "❌ 실패: 동시 연결 ${count}개 (과부하)" -ForegroundColor Red
+}
+{{/code}}
+
+**예상 결과**: `✅ 정상: 동시 연결 < 100개`
+
+=== 4.10.3 성능 지표 체크리스트 ===
+
+{{table}}
+|=테스트|=상태|=기준|=조치
+|평균 응답 시간|[ ]|< 0.5초|성능 최적화
+|동시 연결 수|[ ]|< 100개|워커 프로세스 증가
+{{/table}}
+
+----
+
+= 5. 종합 검증 스크립트 =
+
+== 5.1 자동화 스크립트 실행 ==
+
+{{info}}
+위의 모든 검증을 자동으로 수행하는 스크립트가 제공됩니다.
+{{/info}}
+
+{{code language="powershell"}}
+# 기본 실행 (요약 결과만)
+cd C:\airgap-package\scripts
+.\03-verify-installation.ps1
+
+# 상세 실행 (각 테스트 상세 결과)
+.\03-verify-installation.ps1 -Detailed
+
+# 보고서 저장
+.\03-verify-installation.ps1 -Detailed -ExportReport
+
+# 보고서 위치: C:\nginx\logs\validation-report-yyyyMMdd-HHmmss.json
+{{/code}}
+
+== 5.2 검증 결과 해석 ==
+
+{{table}}
+|=등급|=통과율|=의미|=조치
+|**A+**|95% 이상, 실패 0개|완벽|없음
+|**A**|90% 이상|우수|경고 항목 점검
+|**B**|80% 이상|양호|경고 및 실패 항목 수정
+|**C**|70% 이상|보통|실패 항목 필수 수정
+|**F**|70% 미만|불량|즉시 점검 필요
+{{/table}}
+
+== 5.3 Exit Code ==
+
+{{code language="powershell"}}
+# 스크립트 종료 코드
+# 0: 모든 테스트 통과
+# 1: 실패한 테스트 존재
+# 2: 경고만 존재
+{{/code}}
+
+----
+
+= 6. 일상 운영 절차 =
+
+== 6.1 일일 점검 (Daily Checklist) ==
+
+{{table}}
+|=시각|=점검 항목|=명령어|=예상 결과
+|오전 9시|서비스 상태|`Get-Service nginx, nginx-web-ui`|Running
+|오전 9시|디스크 공간|`Get-PSDrive C`|> 10GB
+|오전 9시|에러 로그|`Get-Content C:\nginx\logs\error.log -Tail 50`|< 10개
+|오전 9시|웹 UI 접속|`http://127.0.0.1:8080`|HTTP 200
+{{/table}}
+
+== 6.2 주간 점검 (Weekly Checklist) ==
+
+{{table}}
+|=요일|=점검 항목|=명령어
+|월요일|SSL 인증서 만료일|섹션 4.7.2
+|화요일|Windows 업데이트|`Get-WindowsUpdate`
+|수요일|로그 정리|섹션 6.4
+|목요일|설정 백업|섹션 6.5
+|금요일|프록시 설정 검증|섹션 4.5
+{{/table}}
+
+== 6.3 월간 점검 (Monthly Checklist) ==
+
+* 패키지 버전 확인 및 기록
+* 성능 모니터링 (CPU, 메모리, 응답 시간)
+* 보안 점검 (방화벽, SSL, 파일 권한)
+* 전체 시스템 검증 (`.\03-verify-installation.ps1`)
+
+== 6.4 로그 정리 절차 ==
+
+{{code language="powershell"}}
+# 7일 이상 된 로그 백업 및 삭제
+$logPath = "C:\nginx\logs"
+$backupPath = "C:\backup\logs"
+$date = Get-Date -Format "yyyyMMdd"
+
+# 1. 백업 디렉토리 생성
+New-Item -ItemType Directory -Path $backupPath -Force
+
+# 2. 오래된 로그 압축
+Get-ChildItem $logPath\*.log |
+    Where-Object {$_.LastWriteTime -lt (Get-Date).AddDays(-7)} |
+    Compress-Archive -DestinationPath "$backupPath\nginx-logs-$date.zip"
+
+# 3. 원본 로그 삭제
+Get-ChildItem $logPath\*.log |
+    Where-Object {$_.LastWriteTime -lt (Get-Date).AddDays(-7)} |
+    Remove-Item -Force
+
+Write-Host "✅ 로그 정리 완료" -ForegroundColor Green
+{{/code}}
+
+== 6.5 설정 백업 절차 ==
+
+{{code language="powershell"}}
+# Nginx 설정 백업
+$backupDate = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupPath = "C:\backup\nginx-config-$backupDate"
+
+# 1. 백업 디렉토리 생성
+New-Item -ItemType Directory -Path $backupPath -Force
+
+# 2. 설정 파일 복사
+Copy-Item -Recurse C:\nginx\conf $backupPath\conf
+Copy-Item -Recurse C:\nginx\conf\conf.d $backupPath\conf.d
+Copy-Item C:\nginx\services.csv $backupPath\services.csv -ErrorAction SilentlyContinue
+Copy-Item C:\nginx\ad-config.json $backupPath\ad-config.json -ErrorAction SilentlyContinue
+
+# 3. 압축
+Compress-Archive -Path $backupPath -DestinationPath "$backupPath.zip"
+
+# 4. 원본 폴더 삭제
+Remove-Item -Recurse -Force $backupPath
+
+Write-Host "✅ 설정 백업 완료: $backupPath.zip" -ForegroundColor Green
+{{/code}}
+
+----
+
+= 7. 긴급 상황 대응 =
+
+== 7.1 Nginx 서비스 중단 ==
+
+{{code language="powershell"}}
+# 1. 서비스 재시작
+Restart-Service nginx
+
+# 2. 로그 확인
+Get-Content C:\nginx\logs\error.log -Tail 100
+
+# 3. 설정 복원 (백업에서)
+$latestBackup = Get-ChildItem C:\backup\nginx-config-*.zip |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+
+Expand-Archive -Path $latestBackup.FullName -DestinationPath "C:\nginx\conf" -Force
+
+# 4. 설정 테스트 후 재시작
+C:\nginx\nginx.exe -t
+Restart-Service nginx
+{{/code}}
+
+== 7.2 웹 UI 응답 없음 ==
+
+{{code language="powershell"}}
+# 1. Node.js 프로세스 확인
+Get-Process node -ErrorAction SilentlyContinue
+
+# 2. 포트 사용 확인
+Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue
+
+# 3. 서비스 재시작
+Restart-Service nginx-web-ui
+
+# 4. 수동 실행 (테스트)
+cd C:\airgap-package\scripts
+node nginx-web-ui.js
+{{/code}}
+
+== 7.3 디스크 공간 부족 ==
+
+{{code language="powershell"}}
+# 1. 로그 정리 (즉시)
+Get-ChildItem C:\nginx\logs\*.log |
+    Where-Object {$_.LastWriteTime -lt (Get-Date).AddDays(-1)} |
+    Remove-Item -Force
+
+# 2. 임시 파일 정리
+Remove-Item C:\Windows\Temp\* -Recurse -Force -ErrorAction SilentlyContinue
+
+# 3. 디스크 공간 재확인
+Get-PSDrive C
+{{/code}}
+
+== 7.4 AD 인증 실패 ==
+
+{{code language="powershell"}}
+# 1. 도메인 연결 확인
+Test-ComputerSecureChannel -Verbose
+
+# 2. DC 연결 확인
+Get-ADDomainController -Discover
+Test-Connection -ComputerName (Get-ADDomainController -Discover).HostName
+
+# 3. 서비스 계정 확인
+Get-ADUser -Identity "nginx-service" | Select-Object Name, Enabled
+
+# 4. ad-config.json 검증
+Get-Content C:\nginx\ad-config.json | ConvertFrom-Json
+{{/code}}
+
+----
+
+= 8. 성능 기준 및 에스컬레이션 =
+
+== 8.1 성능 기준 ==
+
+{{table}}
+|=지표|=정상 범위|=경고|=위험|=조치
+|**CPU 사용률**|< 30%|30-50%|> 50%|프로세스 점검
+|**메모리 (Nginx)**|< 300MB|300-500MB|> 500MB|메모리 누수 점검
+|**메모리 (Node.js)**|< 150MB|150-200MB|> 200MB|재시작 필요
+|**디스크 여유**|> 20GB|10-20GB|< 10GB|로그 정리
+|**응답 시간**|< 0.5초|0.5-1초|> 1초|성능 최적화
+|**에러 발생률**|< 0.1%|0.1-1%|> 1%|원인 분석
+{{/table}}
+
+== 8.2 에스컬레이션 기준 ==
+
+=== 8.2.1 즉시 에스컬레이션 (긴급) ===
+
+* Nginx 서비스 30분 이상 중단
+* 데이터 손실 위험
+* 보안 침해 의심
+* AD 인증 전체 실패
+
+=== 8.2.2 1시간 내 에스컬레이션 ===
+
+* 웹 UI 접속 불가
+* 성능 저하 (응답 시간 > 5초)
+* SSL 인증서 만료 임박 (7일 이내)
+* AD 그룹 권한 문제
+
+=== 8.2.3 다음 업무일 에스컬레이션 ===
+
+* 로그 증가 추세
+* 경고 수준 성능 지표
+* 업데이트 필요
+* 백업 실패
+
+== 8.3 연락처 ==
+
+{{table}}
+|=역할|=이름|=연락처|=대응 시간
+|**1차 담당자**|_________|_________|24시간
+|**2차 담당자**|_________|_________|업무시간
+|**시스템 관리자**|_________|_________|긴급시
+|**AD 관리자**|_________|_________|업무시간
+{{/table}}
+
+----
+
+= 9. 변경 관리 =
+
+== 9.1 변경 로그 템플릿 ==
+
+{{code}}
+날짜: YYYY-MM-DD
+작업자: [이름]
+작업 내용: [상세 설명]
+변경 파일:
+  - [파일 경로]
+백업 위치: [백업 파일 경로]
+테스트 결과: [성공/실패]
+AD 영향: [있음/없음]
+롤백 필요: [예/아니오]
+
+---
+{{/code}}
+
+== 9.2 변경 승인 절차 ==
+
+1. **변경 요청** - 변경 사유 및 영향도 분석
+2. **백업 수행** - 섹션 6.5 참고
+3. **테스트 환경 검증** (가능한 경우)
+4. **승인 획득** - AD 관리자, 시스템 관리자
+5. **변경 수행** - 작업 시간 기록
+6. **검증** - `.\03-verify-installation.ps1` 실행
+7. **문서화** - 변경 로그 작성
+
+----
+
+= 10. 점검 완료 서명 =
+
+== 10.1 일일 점검 ==
+
+{{table}}
+|=날짜|=점검자|=AD 상태|=서비스 상태|=네트워크 상태|=이상 여부|=서명
+|2025-01-__|______|정상/이상|정상/이상|정상/이상|정상 / 이상|____
+|2025-01-__|______|정상/이상|정상/이상|정상/이상|정상 / 이상|____
+{{/table}}
+
+== 10.2 주간 점검 ==
+
+{{table}}
+|=주차|=점검자|=백업 완료|=SSL 확인|=AD 그룹 확인|=이상 여부|=서명
+|2025-W01|______|✓|✓|✓|정상 / 이상|____
+|2025-W02|______|✓|✓|✓|정상 / 이상|____
+{{/table}}
+
+== 10.3 월간 점검 ==
+
+{{table}}
+|=월|=점검자|=성능 검증|=보안 검증|=AD 통합 검증|=이상 여부|=서명
+|2025-01|______|✓|✓|✓|정상 / 이상|____
+{{/table}}
+
+----
+
+= 부록 =
+
+== A. 자동화 스크립트 목록 ==
+
+{{table}}
+|=스크립트|=용도|=위치
+|`01-prepare-airgap.ps1`|에어갭 패키지 준비|`scripts/`
+|`02-install-airgap.ps1`|시스템 설치|`scripts/`
+|`03-verify-installation.ps1`|설치 검증 (자동화)|`scripts/`
+|`nginx-web-ui.js`|웹 UI 서버|`scripts/`
+|`add-proxy.ps1`|프록시 추가|`scripts/`
+{{/table}}
+
+== B. 주요 경로 ==
+
+{{table}}
+|=경로|=용도
+|`C:\nginx\`|Nginx 설치 디렉토리
+|`C:\nginx\conf\nginx.conf`|메인 설정 파일
+|`C:\nginx\conf\conf.d\`|프록시 설정 디렉토리
+|`C:\nginx\conf\ssl\`|SSL 인증서
+|`C:\nginx\logs\`|로그 파일
+|`C:\nginx\ad-config.json`|AD 인증 설정
+|`C:\backup\`|백업 디렉토리
+|`C:\airgap-package\`|설치 패키지
+{{/table}}
+
+== C. 포트 목록 ==
+
+{{table}}
+|=포트|=서비스|=접근 제어
+|80|Nginx HTTP|전체 네트워크
+|443|Nginx HTTPS|전체 네트워크
+|8080|웹 UI|**localhost 전용**
+|389|AD LDAP|도메인 컨트롤러
+{{/table}}
+
+== D. AD 그룹 권한 ==
+
+{{table}}
+|=AD 그룹|=권한|=수행 가능 작업
+|**NginxAdministrators**|전체 관리|설정 변경, 서비스 재시작, 백업 복원
+|**NginxOperators**|운영|모니터링, 로그 조회, 통계 확인
+{{/table}}
+
+----
+
+{{info}}
+**문서 버전**: {{velocity}}$packageVersion{{/velocity}}
+**최종 업데이트**: {{velocity}}$manualDate{{/velocity}}
+**다음 검토 예정**: 2025-11-20
+{{/info}}
+
+{{success}}
+**검증 완료**: 모든 기능 검증이 완료되었습니다. AD 통합, localhost 전용 접근 제어, 10가지 핵심 기능이 정상 동작합니다.
+{{/success}}

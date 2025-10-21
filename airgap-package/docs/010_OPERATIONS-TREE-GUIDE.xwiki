@@ -1,0 +1,668 @@
+= Windows Nginx Air-Gap Package - 운영자 가이드 (트리 구조) =
+
+**버전**: v1.1.0
+**최종 업데이트**: 2025-10-21
+**대상**: 시스템 운영자, 인프라 관리자
+
+----
+
+== 1. 시스템 개요 ==
+
+{{code language="none"}}
+Windows Nginx Air-Gap Package
+├── 핵심 목적: 완전 오프라인 환경에서 Nginx 리버스 프록시 운영
+├── 배포 방식: USB 기반 에어갭 설치
+├── 관리 방식: 3가지 관리 옵션 (웹 UI / PowerShell / Zoraxy)
+└── 자동화: 모니터링, 분석, 벤치마크, 유지보수
+{{/code}}
+
+----
+
+== 2. 운영 작업 트리 ==
+
+=== 2.1 일일 운영 (Daily Operations) ===
+
+{{code language="none"}}
+일일 운영 체크리스트
+│
+├── 1. 시스템 상태 확인
+│   ├── 서비스 상태 확인
+│   │   ├── Get-Service nginx
+│   │   └── Get-Service nginx-web-ui
+│   │
+│   ├── 웹 UI 접속 확인
+│   │   └── http://localhost:8080
+│   │
+│   └── 리소스 사용률 확인
+│       └── .\07-health-monitor.ps1 -QuickCheck
+│
+├── 2. 로그 모니터링
+│   ├── 에러 로그 확인
+│   │   └── Get-Content C:\nginx\logs\error.log -Tail 50
+│   │
+│   ├── 액세스 로그 확인
+│   │   └── Get-Content C:\nginx\logs\access.log -Tail 50
+│   │
+│   └── 보안 이벤트 분석
+│       └── .\08-log-analyzer.ps1 -Hours 24 -SecurityOnly
+│
+└── 3. 프록시 연결 테스트
+    ├── 주요 서비스 연결 확인
+    └── 응답 시간 체크
+{{/code}}
+
+=== 2.2 주간 운영 (Weekly Operations) ===
+
+{{code language="none"}}
+주간 운영 체크리스트
+│
+├── 1. 성능 분석
+│   ├── 벤치마크 실행
+│   │   └── .\09-performance-benchmark.ps1 -Profile Standard
+│   │
+│   ├── 처리량 확인 (RPS)
+│   └── 응답 시간 트렌드 분석 (P50, P95, P99)
+│
+├── 2. 백업 검증
+│   ├── 백업 생성
+│   │   └── .\05-backup-restore.ps1 -Mode Backup
+│   │
+│   ├── 백업 파일 확인
+│   └── 복구 테스트 (선택)
+│
+├── 3. 로그 분석
+│   ├── 주간 통계 생성
+│   │   └── .\08-log-analyzer.ps1 -AnalysisType Weekly
+│   │
+│   ├── Top IP/URL 분석
+│   └── 에러율 트렌드
+│
+└── 4. 시스템 유지보수
+    ├── 로그 로테이션
+    │   └── .\10-auto-maintenance.ps1 -Mode Standard
+    │
+    └── 디스크 공간 확인
+{{/code}}
+
+=== 2.3 월간 운영 (Monthly Operations) ===
+
+{{code language="none"}}
+월간 운영 체크리스트
+│
+├── 1. 종합 검증
+│   ├── 전체 시스템 검증 (37개 테스트)
+│   │   └── .\03-verify-installation.ps1 -Detailed -ExportReport
+│   │
+│   └── 검증 리포트 검토
+│       └── C:\nginx\reports\verification-report.html
+│
+├── 2. 보안 점검
+│   ├── AD 그룹 권한 검토
+│   ├── SSL 인증서 만료일 확인
+│   └── 보안 이벤트 월간 분석
+│
+├── 3. 용량 계획
+│   ├── 로그 크기 분석
+│   ├── 디스크 사용 트렌드
+│   └── 백업 보관 정책 검토
+│
+└── 4. 문서 업데이트
+    ├── 프록시 설정 문서화
+    ├── 변경 이력 기록
+    └── 운영 이슈 아카이빙
+{{/code}}
+
+----
+
+== 3. 스크립트 실행 트리 ==
+
+=== 3.1 설치 및 검증 스크립트 ===
+
+{{code language="none"}}
+설치/검증 워크플로우
+│
+├── [01] 패키지 준비 (인터넷 환경)
+│   ├── 실행: .\01-prepare-airgap.ps1
+│   ├── 작업: 설치 파일 다운로드 및 검증
+│   └── 산출물: 완전한 오프라인 패키지
+│
+├── [02] 시스템 설치 (에어갭 환경)
+│   ├── 실행: .\02-install-airgap.ps1
+│   ├── 작업:
+│   │   ├── Nginx 설치
+│   │   ├── Node.js 설치
+│   │   ├── NSSM 설치
+│   │   └── 서비스 등록
+│   └── 산출물: 실행 중인 Nginx + 웹 UI
+│
+├── [03] 설치 검증
+│   ├── 실행: .\03-verify-installation.ps1 -Detailed
+│   ├── 테스트 항목 (37개):
+│   │   ├── AD 연동 (6개)
+│   │   ├── 서비스 상태 (5개)
+│   │   ├── 네트워크 (5개)
+│   │   ├── Nginx 설정 (5개)
+│   │   ├── 프록시 기능 (2개)
+│   │   ├── 디스크/리소스 (3개)
+│   │   ├── SSL/TLS (3개)
+│   │   ├── 로그 수집 (3개)
+│   │   ├── 백업 (2개)
+│   │   └── 성능 (2개)
+│   └── 산출물: HTML 검증 리포트
+│
+├── [04] AD 통합 설정
+│   ├── 실행: .\04-setup-ad-integration.ps1
+│   ├── 작업:
+│   │   ├── AD 그룹 생성
+│   │   ├── 서비스 계정 설정
+│   │   └── 권한 할당
+│   └── 산출물: AD 통합 완료
+│
+├── [05] 백업/복구
+│   ├── 백업 실행: .\05-backup-restore.ps1 -Mode Backup
+│   ├── 복구 실행: .\05-backup-restore.ps1 -Mode Restore
+│   └── 산출물: 백업 아카이브
+│
+└── [06] 패키지 검증
+    ├── 실행: .\06-validate-enhanced-package.ps1
+    ├── 검증 항목:
+    │   ├── 파일 존재 확인
+    │   ├── 체크섬 검증
+    │   └── 스크립트 문법 검사
+    └── 산출물: 패키지 무결성 확인
+{{/code}}
+
+=== 3.2 운영 자동화 스크립트 ===
+
+{{code language="none"}}
+운영 자동화 워크플로우
+│
+├── [07] 헬스 모니터링
+│   ├── 실행: .\07-health-monitor.ps1
+│   ├── 옵션:
+│   │   ├── -DashboardMode (대시보드 표시)
+│   │   ├── -AutoRecover (자동 복구)
+│   │   └── -ExportLog (로그 저장)
+│   ├── 모니터링 항목:
+│   │   ├── CPU 사용률
+│   │   ├── 메모리 사용률
+│   │   ├── 디스크 사용률
+│   │   ├── Nginx 서비스 상태
+│   │   ├── 웹 UI 서비스 상태
+│   │   └── 프록시 대상 연결성
+│   └── 자동 복구 기능:
+│       ├── Nginx 재시작
+│       ├── 웹 UI 재시작
+│       └── 디스크 정리
+│
+├── [08] 로그 분석
+│   ├── 실행: .\08-log-analyzer.ps1
+│   ├── 옵션:
+│   │   ├── -Hours 24 (분석 기간)
+│   │   ├── -AnalysisType Daily|Weekly (분석 유형)
+│   │   ├── -SecurityOnly (보안 이벤트만)
+│   │   └── -GenerateReport (HTML 리포트)
+│   ├── 분석 기능:
+│   │   ├── HTTP 상태 코드 통계
+│   │   ├── 에러 패턴 감지
+│   │   ├── Top IP/URL/User-Agent
+│   │   └── 보안 이벤트 탐지:
+│   │       ├── SQL Injection
+│   │       ├── Path Traversal
+│   │       └── XSS 시도
+│   └── 산출물: HTML 분석 리포트
+│
+├── [09] 성능 벤치마크
+│   ├── 실행: .\09-performance-benchmark.ps1
+│   ├── 프로파일:
+│   │   ├── Quick (30초, 동시접속 10)
+│   │   ├── Standard (60초, 동시접속 50)
+│   │   └── Stress (120초, 동시접속 200)
+│   ├── 측정 지표:
+│   │   ├── RPS (Requests Per Second)
+│   │   ├── 응답 시간 (평균, P50, P95, P99)
+│   │   ├── HTTP 상태 코드 분포
+│   │   └── CPU/메모리 사용률
+│   └── 성능 등급:
+│       ├── Excellent (>1000 RPS)
+│       ├── Good (500-1000 RPS)
+│       ├── Fair (100-500 RPS)
+│       └── Poor (<100 RPS)
+│
+├── [10] 자동 유지보수
+│   ├── 실행: .\10-auto-maintenance.ps1
+│   ├── 유지보수 유형:
+│   │   ├── Quick (로그 로테이션만)
+│   │   ├── Standard (로그 + 캐시 + 임시파일)
+│   │   └── Deep (전체 + 백업 정리)
+│   ├── 작업 내용:
+│   │   ├── 로그 로테이션 (7일 이상)
+│   │   ├── 로그 압축 (선택)
+│   │   ├── Nginx 캐시 정리
+│   │   ├── 임시 파일 정리
+│   │   └── 백업 보관 정책 (30일)
+│   └── 스케줄 등록:
+│       └── 매일 02:00 자동 실행
+│
+└── [import] CSV 프록시 일괄 등록
+    ├── 실행: .\import-proxies.ps1 -CSVPath "services.csv"
+    ├── 옵션:
+    │   ├── -DryRun (미리보기)
+    │   ├── -Apply (실제 적용)
+    │   └── -BackupExisting (기존 설정 백업)
+    ├── CSV 형식:
+    │   └── domain,upstream_host,upstream_port,ssl_enabled,...
+    └── 작업 프로세스:
+        ├── CSV 검증
+        ├── Nginx 설정 생성
+        ├── 설정 검증 (nginx -t)
+        └── Nginx 재시작
+{{/code}}
+
+----
+
+== 4. 문제 해결 트리 ==
+
+=== 4.1 서비스 관련 문제 ===
+
+{{code language="none"}}
+서비스 문제 해결 플로우차트
+│
+├── Nginx 서비스 시작 실패
+│   ├── 진단:
+│   │   ├── C:\nginx\nginx.exe -t (설정 검증)
+│   │   ├── Get-Content C:\nginx\logs\error.log -Tail 20
+│   │   └── Get-Service nginx
+│   ├── 원인별 해결:
+│   │   ├── 설정 오류 → nginx.conf 수정
+│   │   ├── 포트 충돌 → netstat -ano | findstr :80
+│   │   └── 권한 문제 → 관리자 권한 확인
+│   └── 복구:
+│       └── Restart-Service nginx
+│
+├── 웹 UI 접속 불가
+│   ├── 진단:
+│   │   ├── Get-Service nginx-web-ui
+│   │   ├── netstat -ano | findstr :8080
+│   │   └── node 프로세스 확인
+│   ├── 원인별 해결:
+│   │   ├── 서비스 중지 → Restart-Service nginx-web-ui
+│   │   ├── 포트 충돌 → 다른 프로세스 종료
+│   │   └── Node.js 오류 → 로그 확인
+│   └── 수동 실행:
+│       └── node C:\nginx\web-ui\nginx-web-ui.js
+│
+└── 프록시 연결 실패 (502 Bad Gateway)
+    ├── 진단:
+    │   ├── Test-NetConnection -ComputerName <upstream> -Port <port>
+    │   ├── Get-Content C:\nginx\logs\error.log | Select-String "upstream"
+    │   └── 대상 서버 상태 확인
+    ├── 원인별 해결:
+    │   ├── 대상 서버 다운 → 서버 재시작
+    │   ├── 네트워크 차단 → 방화벽 규칙 확인
+    │   └── 설정 오류 → conf.d/*.conf 수정
+    └── 설정 재로드:
+        └── C:\nginx\nginx.exe -s reload
+{{/code}}
+
+=== 4.2 성능 관련 문제 ===
+
+{{code language="none"}}
+성능 문제 해결 플로우차트
+│
+├── 느린 응답 속도
+│   ├── 진단:
+│   │   ├── .\09-performance-benchmark.ps1 -Profile Standard
+│   │   ├── 응답 시간 확인 (P95, P99)
+│   │   └── 리소스 사용률 확인
+│   ├── 원인 분석:
+│   │   ├── CPU 병목 → 프로세스 최적화
+│   │   ├── 메모리 부족 → 메모리 증설
+│   │   ├── 네트워크 지연 → 네트워크 진단
+│   │   └── 대상 서버 느림 → 대상 서버 최적화
+│   └── 최적화:
+│       ├── worker_processes 조정
+│       ├── worker_connections 증가
+│       └── 캐싱 활성화
+│
+├── 높은 에러율
+│   ├── 진단:
+│   │   ├── .\08-log-analyzer.ps1 -Hours 24
+│   │   ├── HTTP 상태 코드 분포 확인
+│   │   └── 에러 패턴 분석
+│   ├── 원인별 해결:
+│   │   ├── 4xx 에러 → 클라이언트 요청 검토
+│   │   ├── 5xx 에러 → 서버 설정/대상 서버 확인
+│   │   └── 타임아웃 → proxy_timeout 조정
+│   └── 모니터링:
+│       └── .\07-health-monitor.ps1 -DashboardMode
+│
+└── 디스크 공간 부족
+    ├── 진단:
+    │   ├── Get-PSDrive C | Select-Object Free
+    │   ├── 로그 파일 크기 확인
+    │   └── 백업 파일 크기 확인
+    ├── 즉시 조치:
+    │   └── .\10-auto-maintenance.ps1 -Mode Deep
+    └── 장기 대책:
+        ├── 로그 보관 기간 단축
+        ├── 백업 보관 정책 조정
+        └── 디스크 증설 계획
+{{/code}}
+
+----
+
+== 5. 관리 작업 트리 ==
+
+=== 5.1 프록시 추가/수정/삭제 ===
+
+{{code language="none"}}
+프록시 관리 워크플로우
+│
+├── 방법 1: 웹 UI (권장)
+│   ├── 접속: http://localhost:8080
+│   ├── 프록시 추가:
+│   │   ├── "Add Proxy" 클릭
+│   │   ├── 도메인, 대상 IP/포트 입력
+│   │   ├── SSL 설정 (선택)
+│   │   └── "Save" 클릭
+│   ├── 프록시 수정:
+│   │   └── 목록에서 "Edit" 클릭
+│   └── 프록시 삭제:
+│       └── 목록에서 "Delete" 클릭
+│
+├── 방법 2: PowerShell CSV 일괄 등록
+│   ├── CSV 파일 준비:
+│   │   └── configs\services.csv 편집
+│   ├── 미리보기:
+│   │   └── .\import-proxies.ps1 -CSVPath "services.csv" -DryRun
+│   ├── 실제 적용:
+│   │   └── .\import-proxies.ps1 -CSVPath "services.csv" -Apply
+│   └── 검증:
+│       └── C:\nginx\nginx.exe -t
+│
+└── 방법 3: 수동 설정 파일 편집
+    ├── 설정 파일 생성:
+    │   └── notepad C:\nginx\conf.d\new-site.conf
+    ├── 설정 예시:
+    │   └── configs\nginx\conf.d\*.conf 참조
+    ├── 문법 검증:
+    │   └── C:\nginx\nginx.exe -t
+    └── 재시작:
+        └── C:\nginx\nginx.exe -s reload
+{{/code}}
+
+=== 5.2 SSL 인증서 관리 ===
+
+{{code language="none"}}
+SSL 인증서 관리 워크플로우
+│
+├── 인증서 설치
+│   ├── 인증서 파일 준비:
+│   │   ├── domain.crt (공개키)
+│   │   └── domain.key (개인키)
+│   ├── 파일 배치:
+│   │   └── Copy-Item *.crt,*.key -Destination C:\nginx\ssl\
+│   ├── Nginx 설정:
+│   │   ├── ssl_certificate C:\nginx\ssl\domain.crt;
+│   │   └── ssl_certificate_key C:\nginx\ssl\domain.key;
+│   └── 재시작:
+│       └── C:\nginx\nginx.exe -s reload
+│
+├── 인증서 갱신
+│   ├── 새 인증서 발급
+│   ├── 기존 인증서 백업:
+│   │   └── Copy-Item C:\nginx\ssl\*.crt,*.key -Destination C:\Backup\
+│   ├── 새 인증서 배치
+│   └── Nginx 재시작
+│
+└── 인증서 만료 확인
+    ├── 만료일 확인:
+    │   └── openssl x509 -in domain.crt -noout -dates
+    └── 자동 모니터링:
+        └── 검증 스크립트에 포함됨
+{{/code}}
+
+=== 5.3 백업 및 복구 ===
+
+{{code language="none"}}
+백업/복구 워크플로우
+│
+├── 수동 백업
+│   ├── 실행:
+│   │   └── .\05-backup-restore.ps1 -Mode Backup -BackupPath "D:\Backups\nginx"
+│   ├── 백업 항목:
+│   │   ├── C:\nginx\conf\ (모든 설정)
+│   │   ├── C:\nginx\ssl\ (SSL 인증서)
+│   │   └── 레지스트리 (서비스 설정)
+│   └── 백업 위치:
+│       └── D:\Backups\nginx\YYYY-MM-DD-HHmmss\
+│
+├── 자동 백업 (스케줄)
+│   ├── 스케줄 등록:
+│   │   └── Register-ScheduledTask "Nginx Daily Backup"
+│   ├── 실행 시간:
+│   │   └── 매일 02:00
+│   └── 보관 정책:
+│       └── 30일 (10-auto-maintenance.ps1에서 관리)
+│
+└── 복구
+    ├── 백업 목록 확인:
+    │   └── Get-ChildItem D:\Backups\nginx\
+    ├── 복구 실행:
+    │   └── .\05-backup-restore.ps1 -Mode Restore -BackupPath "D:\Backups\nginx\2025-10-21"
+    └── 검증:
+        └── .\03-verify-installation.ps1
+{{/code}}
+
+----
+
+== 6. 모니터링 대시보드 ==
+
+=== 6.1 실시간 대시보드 실행 ===
+
+{{code language="powershell"}}
+# 대시보드 모드로 헬스 모니터링 실행
+.\07-health-monitor.ps1 -DashboardMode -AutoRecover
+
+# 출력 예시:
+# ================================================
+# Nginx Health Monitor Dashboard
+# ================================================
+# 
+# [2025-10-21 08:30:00]
+# 
+# System Resources:
+#   CPU Usage:     23.5%   ✓
+#   Memory Usage:  45.2%   ✓
+#   Disk Usage:    67.8%   ✓
+# 
+# Services:
+#   nginx:         Running ✓
+#   nginx-web-ui:  Running ✓
+# 
+# Network:
+#   Port 80:       Listening ✓
+#   Port 443:      Listening ✓
+#   Port 8080:     Listening ✓
+# 
+# Proxies:
+#   app.company.local     → 192.168.1.100:3000  ✓ (45ms)
+#   dashboard.company.local → 192.168.1.101:8080  ✓ (23ms)
+#   api.company.local     → 192.168.1.102:5000  ✓ (67ms)
+# 
+# Overall Status: HEALTHY ✓
+# ================================================
+{{/code}}
+
+=== 6.2 로그 분석 리포트 ===
+
+{{code language="powershell"}}
+# 일간 로그 분석 (HTML 리포트)
+.\08-log-analyzer.ps1 -AnalysisType Daily -ExportReport "C:\nginx\reports\daily-log.html"
+
+# 리포트 내용:
+# - HTTP 상태 코드 분포 (파이 차트)
+# - Top 10 IP 주소 (막대 그래프)
+# - Top 10 요청 URL (테이블)
+# - Top 10 User-Agent (테이블)
+# - 보안 이벤트 (경고 목록)
+# - 에러율 트렌드 (라인 차트)
+{{/code}}
+
+=== 6.3 성능 벤치마크 리포트 ===
+
+{{code language="powershell"}}
+# 표준 성능 테스트 (HTML 리포트)
+.\09-performance-benchmark.ps1 -Profile Standard -GenerateReport
+
+# 리포트 내용:
+# - RPS (Requests Per Second): 856 req/s
+# - 응답 시간:
+#   - 평균: 58ms
+#   - P50: 45ms
+#   - P95: 123ms
+#   - P99: 187ms
+# - HTTP 상태 코드:
+#   - 2xx: 98.5%
+#   - 4xx: 1.2%
+#   - 5xx: 0.3%
+# - 시스템 리소스:
+#   - CPU: 45% (peak 67%)
+#   - Memory: 52% (peak 58%)
+# - 성능 등급: Good (B+)
+{{/code}}
+
+----
+
+== 7. 긴급 상황 대응 ==
+
+=== 7.1 서비스 전체 다운 ===
+
+{{code language="none"}}
+긴급 복구 절차
+│
+├── 1. 현황 파악 (1분)
+│   ├── Get-Service nginx, nginx-web-ui
+│   ├── Get-Process nginx, node
+│   └── 에러 로그 확인
+│
+├── 2. 즉시 조치 (2분)
+│   ├── Restart-Service nginx
+│   ├── Restart-Service nginx-web-ui
+│   └── 서비스 재시작 확인
+│
+├── 3. 설정 검증 (1분)
+│   ├── C:\nginx\nginx.exe -t
+│   └── 설정 오류 시 백업에서 복구
+│
+└── 4. 모니터링 (5분)
+    ├── .\07-health-monitor.ps1 -QuickCheck
+    ├── 주요 프록시 연결 테스트
+    └── 정상 작동 확인
+{{/code}}
+
+=== 7.2 디스크 공간 고갈 ===
+
+{{code language="none"}}
+디스크 공간 긴급 확보
+│
+├── 1. 현재 사용량 확인
+│   └── Get-PSDrive C | Select-Object Free,Used
+│
+├── 2. 즉시 정리
+│   ├── .\10-auto-maintenance.ps1 -Mode Deep
+│   └── 예상 확보 공간: 1-5GB
+│
+├── 3. 수동 정리 (필요시)
+│   ├── Remove-Item C:\nginx\logs\*.log.gz -Force
+│   ├── Remove-Item C:\Temp\* -Recurse -Force
+│   └── 오래된 백업 삭제
+│
+└── 4. 장기 대책
+    ├── 로그 보관 기간 조정
+    └── 디스크 증설 요청
+{{/code}}
+
+=== 7.3 보안 사고 대응 ===
+
+{{code language="none"}}
+보안 사고 대응 절차
+│
+├── 1. 이상 징후 탐지
+│   ├── .\08-log-analyzer.ps1 -SecurityOnly
+│   └── 보안 이벤트 확인
+│
+├── 2. 긴급 조치
+│   ├── 의심 IP 차단 (nginx.conf)
+│   ├── 문제 프록시 비활성화
+│   └── 로그 보존 (증거 확보)
+│
+├── 3. 상세 분석
+│   ├── 공격 패턴 분석
+│   ├── 영향 범위 파악
+│   └── 침해 여부 확인
+│
+└── 4. 복구 및 보고
+    ├── 설정 강화
+    ├── 모니터링 강화
+    └── 보안 팀 보고
+{{/code}}
+
+----
+
+== 8. 참고 자료 ==
+
+=== 8.1 문서 위치 ===
+
+{{code language="none"}}
+문서 구조
+│
+├── 기술 문서
+│   ├── docs/architecture.md      (시스템 아키텍처)
+│   ├── docs/api.md               (API 참조)
+│   ├── docs/deployment.md        (배포 가이드)
+│   └── docs/troubleshooting.md   (문제 해결)
+│
+├── 운영 매뉴얼
+│   ├── docs/001_README.md        (설치 가이드)
+│   ├── docs/002_PROXY-MANAGER-OPTIONS.md
+│   ├── docs/003_OPERATIONS-CHECKLIST.md
+│   └── docs/005_OPERATIONS-MANUAL-DETAILED.md
+│
+└── 설정 예시
+    ├── configs/nginx/conf.d/proxy-config-example.conf
+    ├── configs/nginx/conf.d/example-app.company.local.conf
+    ├── configs/nginx/conf.d/example-loadbalancer.conf
+    └── configs/services.csv
+{{/code}}
+
+=== 8.2 주요 경로 ===
+
+{{code language="none"}}
+시스템 경로
+│
+├── Nginx 설치 경로
+│   ├── C:\nginx\              (루트)
+│   ├── C:\nginx\conf\         (메인 설정)
+│   ├── C:\nginx\conf.d\       (프록시 설정)
+│   ├── C:\nginx\logs\         (로그)
+│   ├── C:\nginx\ssl\          (인증서)
+│   └── C:\nginx\web-ui\       (웹 UI)
+│
+├── 스크립트 경로
+│   └── C:\airgap-package\scripts\
+│
+├── 백업 경로
+│   └── D:\Backups\nginx\
+│
+└── 리포트 경로
+    └── C:\nginx\reports\
+{{/code}}
+
+----
+
+**문서 끝**
+
+이 가이드는 Windows Nginx Air-Gap Package v1.1.0을 기준으로 작성되었습니다.
+운영 중 문제가 발생하면 docs/troubleshooting.md를 참조하거나 시스템 관리자에게 문의하세요.

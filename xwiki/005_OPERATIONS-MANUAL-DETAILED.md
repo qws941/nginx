@@ -1,0 +1,1 @@
+../airgap-package/docs/005_OPERATIONS-MANUAL-DETAILED.md

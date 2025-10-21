@@ -1,0 +1,5 @@
+서비스명,ARecord,IP,Port,UseHTTPS,CustomPath,비고
+메인웹서버,web1,192.168.1.10,80,N,,일반 웹서버
+API서버,api1,192.168.1.20,8080,N,,REST API 서버
+Node.js앱,nodeapp,127.0.0.1,3000,N,,Express 애플리케이션
+관리콘솔,admin1,192.168.1.30,8443,Y,,HTTPS 관리콘솔

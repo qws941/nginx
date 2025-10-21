@@ -1,0 +1,1 @@
+../airgap-package/docs/006_SYNTAX-CHECK-REPORT.md

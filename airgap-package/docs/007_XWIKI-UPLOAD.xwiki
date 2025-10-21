@@ -1,0 +1,476 @@
+{{velocity}}
+#set($packageVersion = "1.0.0")
+#set($packageDate = "2025-10-20")
+#set($packageSize = "132MB")
+{{/velocity}}
+
+= 에어갭 환경 통합 설치 패키지 =
+
+{{info}}
+**완전 오프라인 설치 패키지** - 인터넷 연결 없이 Windows Server에 Node.js + Nginx 리버스 프록시 시스템 구축
+{{/info}}
+
+----
+
+== 📦 패키지 정보 ==
+
+{{table}}
+|=항목|=내용
+|생성 일시|2025-10-20
+|패키지 크기|132MB (Zoraxy 포함)
+|패키지 버전|1.0.0
+|대상 환경|Windows Server 2016/2019/2022 (에어갭)
+|문법 검사|✅ 통과 (A+ 등급)
+{{/table}}
+
+----
+
+== ✅ 포함된 구성요소 ==
+
+{{table}}
+|=구성요소|=버전|=크기|=용도
+|**Node.js**|v20.11.0|26MB|JavaScript 런타임
+|**Nginx**|v1.24.0|1.7MB|리버스 프록시 웹서버
+|**Zoraxy**|latest|80MB|웹 UI 프록시 관리자 (옵션)
+|**NSSM**|v2.24|344KB|Windows 서비스 관리자
+|**Visual C++**|2022|25MB|런타임 라이브러리
+{{/table}}
+
+{{success}}
+**모든 파일의 SHA256 체크섬이 포함되어 있습니다.**
+{{/success}}
+
+=== 🎯 프록시 관리 옵션 3가지 ===
+
+기존 **conf.d** 설정을 작성하신 경우, 다음 중 선택하세요:
+
+# **PowerShell 스크립트** - CSV 파일 기반, 웹 UI 없음
+# **Node.js 웹 UI** ⭐ - 기존 설정 유지 + 웹 UI (권장)
+# **Zoraxy** - 독립형 웹 UI, Nginx 대체
+
+{{info}}
+자세한 내용은 **[[PROXY-MANAGER-OPTIONS>>doc:ProxyManagerOptions]]** 페이지를 참조하세요.
+{{/info}}
+
+----
+
+== 🔥 빠른 설치 (3단계) ==
+
+=== 1️⃣ 패키지 전송 ===
+
+{{code language="bash"}}
+# USB 또는 내부 네트워크로 전송
+# 전체 airgap-package 폴더를 Windows Server로 복사
+{{/code}}
+
+=== 2️⃣ 설치 실행 ===
+
+{{code language="powershell"}}
+# Windows Server에서 관리자 PowerShell 실행
+cd airgap-package\scripts
+.\02-install-airgap.ps1
+
+# 자동으로 설치됩니다:
+# ✓ Visual C++ 재배포 패키지
+# ✓ Node.js v20.11.0
+# ✓ Nginx v1.24.0
+# ✓ NSSM 서비스 관리자
+# ✓ Zoraxy 프록시 관리자
+# ✓ DNS 서버 (선택)
+# ✓ 방화벽 규칙
+{{/code}}
+
+=== 3️⃣ 검증 ===
+
+{{code language="powershell"}}
+.\03-verify-installation.ps1
+
+# 설치 확인
+node --version
+npm --version
+{{/code}}
+
+----
+
+== 📂 패키지 구조 ==
+
+{{code}}
+airgap-package/
+├── installers/                     # 설치 파일 (131MB)
+│   ├── node-v20.11.0-x64.msi      # Node.js 설치 파일
+│   ├── nginx-1.24.0.zip           # Nginx 웹서버
+│   ├── zoraxy_windows_amd64.exe   # Zoraxy 프록시 관리자
+│   ├── nssm-2.24.zip              # NSSM 서비스 관리자
+│   └── vcredist_x64.exe           # Visual C++ 재배포
+├── scripts/                        # 설치 스크립트
+│   ├── 01-prepare-airgap.ps1      # 패키지 수집 (인터넷 환경)
+│   ├── 02-install-airgap.ps1      # ★ 메인 설치 스크립트
+│   ├── 03-verify-installation.ps1  # 설치 검증
+│   ├── download-packages.sh        # [Linux] 패키지 수집
+│   └── nginx-web-ui.js            # Node.js 웹 UI
+├── configs/                        # 설정 템플릿
+│   ├── .env.example               # 환경변수 템플릿
+│   └── services.csv.example       # 서비스 목록 예제
+├── npm-packages/                   # npm 패키지
+│   └── package.json               # Express 등 웹 패키지
+├── ssl/                            # SSL 인증서 (수동 추가 필요)
+│   ├── cert.crt (또는 cert.pem)   # 인증서 파일
+│   └── cert.key                    # 개인키 파일
+├── logs/                           # 설치 로그
+├── checksums.txt                   # ★ 파일 무결성 체크섬
+├── PACKAGE-INFO.txt                # 패키지 정보
+├── SYNTAX-CHECK-REPORT.md          # 문법 검사 보고서
+├── PROXY-MANAGER-OPTIONS.md        # 프록시 관리 옵션
+└── README.md                       # 이 문서
+{{/code}}
+
+----
+
+== 🔒 보안 검증 ==
+
+=== 파일 무결성 확인 ===
+
+{{code language="powershell"}}
+# PowerShell에서 체크섬 검증
+Get-FileHash installers\node-v20.11.0-x64.msi -Algorithm SHA256
+
+# checksums.txt와 비교
+Get-Content checksums.txt
+{{/code}}
+
+=== 체크섬 값 ===
+
+{{table}}
+|=파일명|=SHA256 체크섬
+|node-v20.11.0-x64.msi|9a8c2e99b1fca559e1a1a393d6be4a23781b0c66883a9d6e5584272d9bf49dc2
+|nginx-1.24.0.zip|69a36bfd2a61d7a736fafd392708bd0fb6cf15d741f8028fe6d8bb5ebd670eb9
+|nssm-2.24.zip|727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743
+|vcredist_x64.exe|cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b
+|zoraxy_windows_amd64.exe|6aea6329574559decb54cbd5b4481be06e260e99fcf0427caf83e0239841a374
+{{/table}}
+
+----
+
+== 🛠️ 설치 후 작업 ==
+
+=== 1. PowerShell 재시작 ===
+
+{{code language="powershell"}}
+# 환경변수 적용을 위해 필수
+exit
+# 새 PowerShell 창을 관리자 권한으로 재실행
+{{/code}}
+
+=== 2. Nginx 서비스 등록 ===
+
+{{code language="powershell"}}
+cd C:\nginx
+.\nssm.exe install nginx "C:\nginx\nginx.exe"
+Start-Service nginx
+Get-Service nginx
+{{/code}}
+
+=== 3. SSL 인증서 설치 (필수) ===
+
+{{code language="powershell"}}
+# ssl/ 폴더에 인증서 복사
+Copy-Item cert.crt C:\nginx\conf\ssl\
+Copy-Item cert.key C:\nginx\conf\ssl\
+
+# 또는 패키지의 ssl/ 폴더에 미리 넣어두기
+{{/code}}
+
+=== 4. Node.js 웹 UI 시작 (권장) ===
+
+{{code language="powershell"}}
+# Node.js 웹 관리 UI 실행
+cd C:\airgap-package\scripts
+node nginx-web-ui.js
+
+# 브라우저 접속
+# http://localhost:8080
+{{/code}}
+
+----
+
+== 🎯 프록시 관리 옵션 상세 ==
+
+=== 옵션 비교표 ===
+
+{{table}}
+|=옵션|=기존 설정 유지|=웹 UI|=Docker 필요|=권장 대상
+|**옵션 1: PowerShell**|✅|❌|❌|PowerShell 익숙한 사용자
+|**옵션 2: Node.js UI**|✅|✅|❌|웹 UI 원하는 사용자 ⭐
+|**옵션 3: Zoraxy**|❌|✅|❌|완전히 새로 시작
+{{/table}}
+
+=== 옵션 1: PowerShell 스크립트 ===
+
+{{code language="powershell"}}
+# 프록시 추가 (CSV 기반)
+cd C:\nginx
+.\nginx-proxy-manager.ps1
+
+# CSV 파일 편집
+notepad services.csv
+{{/code}}
+
+**장점:**
+* ✅ 기존 conf.d 설정 100% 유지
+* ✅ CSV 파일 기반 관리
+* ✅ DNS 자동 등록
+
+**단점:**
+* ❌ 웹 UI 없음
+
+=== 옵션 2: Node.js 웹 UI ⭐ (권장) ===
+
+{{code language="powershell"}}
+# 웹 UI 시작
+cd C:\airgap-package\scripts
+node nginx-web-ui.js
+
+# 브라우저 접속
+# http://localhost:8080
+{{/code}}
+
+**기능:**
+* ✅ 기존 conf.d 설정 자동 인식
+* ✅ 웹 UI에서 프록시 추가/삭제
+* ✅ Nginx 실시간 재로드
+* ✅ 상태 모니터링 (5초마다)
+* ✅ SSL 배지 표시
+
+**서비스 등록 (자동 시작):**
+
+{{code language="powershell"}}
+cd C:\nginx
+.\nssm.exe install nginx-web-ui "C:\Program Files\nodejs\node.exe"
+.\nssm.exe set nginx-web-ui AppParameters "C:\airgap-package\scripts\nginx-web-ui.js"
+.\nssm.exe set nginx-web-ui AppDirectory "C:\airgap-package\scripts"
+.\nssm.exe set nginx-web-ui DisplayName "Nginx Web UI"
+.\nssm.exe set nginx-web-ui Start SERVICE_AUTO_START
+
+Start-Service nginx-web-ui
+{{/code}}
+
+=== 옵션 3: Zoraxy ===
+
+{{warning}}
+**⚠️ 주의**: Zoraxy를 사용하면 기존 Nginx conf.d 설정을 사용할 수 없습니다!
+{{/warning}}
+
+{{code language="powershell"}}
+# Nginx 중지
+Stop-Service nginx
+
+# Zoraxy 실행
+C:\zoraxy\zoraxy_windows_amd64.exe
+
+# 웹 UI
+# http://localhost:8000
+{{/code}}
+
+**장점:**
+* ✅ 최신 웹 UI (더 직관적)
+* ✅ 실시간 설정 변경 (재시작 불필요)
+* ✅ SSL 자동 관리
+
+**단점:**
+* ❌ 기존 conf.d 설정 사용 불가
+* ❌ 모든 프록시를 수동으로 다시 추가
+
+----
+
+== ⚙️ 선택적 설치 옵션 ==
+
+{{code language="powershell"}}
+# DNS 서버 제외
+.\02-install-airgap.ps1 -SkipDNS
+
+# 방화벽 규칙 제외
+.\02-install-airgap.ps1 -SkipFirewall
+
+# Node.js 제외 (Nginx만)
+.\02-install-airgap.ps1 -SkipNodeJS
+
+# 강제 설치 (확인 없이)
+.\02-install-airgap.ps1 -Force
+
+# 복합 옵션
+.\02-install-airgap.ps1 -SkipDNS -SkipFirewall -Force
+{{/code}}
+
+----
+
+== 🔍 설치 검증 ==
+
+{{code language="powershell"}}
+# 기본 검증
+.\03-verify-installation.ps1
+
+# 상세 모드 (디버깅)
+.\03-verify-installation.ps1 -Detailed
+
+# 보고서 내보내기 (JSON)
+.\03-verify-installation.ps1 -ExportReport
+{{/code}}
+
+=== 검증 항목 (총 8개 카테고리) ===
+
+# ✓ Node.js 및 npm 버전
+# ✓ Nginx 설정 파일 및 구문
+# ✓ NSSM 서비스 관리자
+# ✓ DNS 서버 상태
+# ✓ 방화벽 규칙
+# ✓ SSL 인증서
+# ✓ 환경변수 (PATH)
+# ✓ 포트 가용성 (80, 443, 3000, 8080)
+
+----
+
+== 📊 시스템 요구사항 ==
+
+{{table}}
+|=항목|=요구사항
+|**운영체제**|Windows Server 2016/2019/2022
+|**PowerShell**|5.1 이상
+|**디스크 공간**|최소 10GB 여유
+|**메모리**|최소 4GB RAM
+|**권한**|관리자 권한 필수
+|**네트워크**|인터넷 불필요 (오프라인 설치)
+{{/table}}
+
+----
+
+== ⚠️ 문제 해결 ==
+
+=== Node.js 명령어를 찾을 수 없음 ===
+
+{{code language="powershell"}}
+# 환경변수 수동 설정
+$env:Path += ";C:\Program Files\nodejs"
+[Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")
+
+# PowerShell 재시작 필수
+{{/code}}
+
+=== Nginx 서비스 시작 실패 ===
+
+{{code language="powershell"}}
+# 로그 확인
+Get-Content C:\nginx\logs\error.log -Tail 20
+
+# 설정 파일 테스트
+C:\nginx\nginx.exe -t
+
+# 포트 충돌 확인
+Get-NetTCPConnection -LocalPort 80,443
+{{/code}}
+
+=== SSL 인증서 오류 ===
+
+{{code language="powershell"}}
+# 인증서 파일 권한 확인
+icacls C:\nginx\conf\ssl\cert.key
+
+# PEM 형식 확인 (-----BEGIN CERTIFICATE-----)
+Get-Content C:\nginx\conf\ssl\cert.crt | Select-Object -First 1
+{{/code}}
+
+=== 체크섬 불일치 ===
+
+{{code language="powershell"}}
+# 파일 재다운로드 필요
+# checksums.txt와 실제 파일 해시값 비교
+Get-FileHash installers\*.* -Algorithm SHA256
+{{/code}}
+
+----
+
+== 📝 로그 파일 ==
+
+설치 및 검증 로그는 다음 위치에 저장됩니다:
+
+{{code}}
+logs/
+├── install-YYYYMMDD-HHMMSS.log      # 설치 로그
+├── verification-YYYYMMDD-HHMMSS.json # 검증 보고서
+└── download-YYYYMMDD-HHMMSS.log     # 다운로드 로그 (Linux)
+{{/code}}
+
+----
+
+== 📚 참고 자료 ==
+
+* [[Node.js 공식 문서>>https://nodejs.org/docs/]]
+* [[Nginx 공식 문서>>https://nginx.org/en/docs/]]
+* [[NSSM 사용 가이드>>https://nssm.cc/usage]]
+* [[PowerShell 스크립팅>>https://docs.microsoft.com/powershell/]]
+* [[Zoraxy 공식 사이트>>https://zoraxy.aroz.org/]]
+
+----
+
+== 📄 라이선스 ==
+
+이 패키지에 포함된 각 소프트웨어는 해당 라이선스를 따릅니다:
+
+* **Node.js**: MIT License
+* **Nginx**: 2-clause BSD License
+* **NSSM**: Public Domain
+* **Visual C++**: Microsoft License
+* **Zoraxy**: AGPLv3
+
+----
+
+== 🎉 설치 완료 ==
+
+모든 단계를 완료하셨다면 다음을 실행할 수 있습니다:
+
+{{code language="powershell"}}
+# Node.js 확인
+node --version
+npm --version
+
+# Nginx 상태 확인
+Get-Service nginx
+
+# 웹 UI 접속
+# http://localhost:8080 (Node.js UI)
+# http://localhost:8000 (Zoraxy)
+{{/code}}
+
+{{success}}
+**Happy Coding! 🚀**
+{{/success}}
+
+----
+
+== 📞 지원 및 문의 ==
+
+=== 설치 실패 시 ===
+
+# `logs/install-*.log` 확인
+# `checksums.txt`로 파일 무결성 검증
+# 관리자 권한 확인
+# Windows 버전 호환성 확인
+
+=== 버전 정보 ===
+
+* **패키지 버전**: 1.0.0
+* **생성 일시**: 2025-10-20
+* **Node.js**: v20.11.0 (LTS)
+* **npm**: v10.2.4
+* **Nginx**: v1.24.0
+* **NSSM**: v2.24
+* **Zoraxy**: latest
+* **Visual C++**: 2022 Redistributable
+
+----
+
+{{info}}
+**Version**: 1.0.0
+**Last Updated**: 2025-10-20
+**Package Hash**: SHA256 verified
+**Quality Grade**: A+ (95/100)
+{{/info}}

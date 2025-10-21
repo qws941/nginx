@@ -1,0 +1,228 @@
+################################################################################
+# GRAFANA MONITORING STACK - GIT IGNORE RULES
+# Based on Constitutional Framework v11.11 and CLAUDE.md standards
+# Project: Grafana Monitoring Stack (Synology NAS Deployment)
+################################################################################
+
+# ==============================================================================
+# SECURITY & CREDENTIALS (CRITICAL - NEVER COMMIT)
+# ==============================================================================
+# Environment files with secrets
+*.env
+*.env.*
+!*.env.example
+.envrc
+.env.credentials
+envs/
+
+# Credentials and tokens
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+credentials.json
+.credentials.json
+secrets/
+.secrets/
+
+# ==============================================================================
+# BACKUP FILES (PROHIBITED per CLAUDE.md)
+# Use Git version control instead of backup files
+# ==============================================================================
+*.backup
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# ==============================================================================
+# DATA & RUNTIME FILES
+# ==============================================================================
+# Monitoring data (stored on Synology NAS)
+data/
+logs/
+prometheus-data/
+grafana-data/
+loki-data/
+alertmanager-data/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+.cache/
+tmp/
+
+# Log files
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==============================================================================
+# BUILD ARTIFACTS & DEPENDENCIES
+# ==============================================================================
+# Node.js
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+
+# ==============================================================================
+# DEVELOPMENT TOOLS
+# ==============================================================================
+# IDE files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.c9/
+.settings/
+*.launch
+.metadata
+
+# Editor swap files
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# OS-SPECIFIC FILES
+# ==============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+.nfs*
+
+# ==============================================================================
+# DOCKER & CONTAINERS
+# ==============================================================================
+# Local development overrides
+docker-compose.local.yml
+docker-compose.override.yml
+docker-compose.*.local.yml
+
+# Docker volumes (not .docker-context - needed for team alignment)
+.docker/volumes/
+
+# ==============================================================================
+# CLAUDE CODE SPECIFIC
+# ==============================================================================
+# Claude Code project files
+.claude/
+debug/
+projects/
+shell-snapshots/
+file-history/
+statsig/
+todos/
+*.jsonl
+settings.json
+
+# MCP server data
+.mcp/
+mcp-data/
+
+# ==============================================================================
+# GRAFANA MONITORING SPECIFIC
+# ==============================================================================
+# Prometheus data
+/prometheus/data/
+/data/prometheus/
+
+# Grafana data (databases, sessions, plugins)
+/grafana/data/
+/data/grafana/
+grafana.db
+
+# Loki data
+/loki/data/
+/data/loki/
+
+# AlertManager data
+/alertmanager/data/
+/data/alertmanager/
+
+# ==============================================================================
+# TESTING & COVERAGE
+# ==============================================================================
+coverage/
+*.coverage
+.nyc_output/
+.pytest_cache/
+.tox/
+htmlcov/
+*.cover
+.hypothesis/
+
+# ==============================================================================
+# DOCUMENTATION BUILD ARTIFACTS
+# ==============================================================================
+_build/
+_static/
+_templates/
+*.rst~
+
+# ==============================================================================
+# ALLOWED FILES (EXPLICITLY NOT IGNORED)
+# ==============================================================================
+# Configuration templates
+!*.example
+!*.template
+!*.sample
+
+# Documentation
+!docs/
+!*.md
+!README*
+
+# GitHub workflows
+!.github/
+
+# Essential configs
+!docker-compose.yml
+!Dockerfile
+!.dockerignore
+!.editorconfig

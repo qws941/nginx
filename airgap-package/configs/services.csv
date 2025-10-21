@@ -1,0 +1,4 @@
+domain,upstream_host,upstream_port,ssl_enabled,ssl_cert_path,ssl_key_path
+app.company.local,192.168.1.100,3000,true,C:\nginx\ssl\app.crt,C:\nginx\ssl\app.key
+dashboard.company.local,192.168.1.101,8080,false,,
+api.company.local,192.168.1.102,5000,true,C:\nginx\ssl\api.crt,C:\nginx\ssl\api.key

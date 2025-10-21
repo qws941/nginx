@@ -1,0 +1,5 @@
+69a36bfd2a61d7a736fafd392708bd0fb6cf15d741f8028fe6d8bb5ebd670eb9  airgap-package/installers/nginx-1.24.0.zip
+9a8c2e99b1fca559e1a1a393d6be4a23781b0c66883a9d6e5584272d9bf49dc2  airgap-package/installers/node-v20.11.0-x64.msi
+727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743  airgap-package/installers/nssm-2.24.zip
+cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b  airgap-package/installers/vcredist_x64.exe
+6aea6329574559decb54cbd5b4481be06e260e99fcf0427caf83e0239841a374  airgap-package/installers/zoraxy_windows_amd64.exe
