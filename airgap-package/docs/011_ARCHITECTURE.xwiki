@@ -1,0 +1,655 @@
+= Windows Nginx Air-Gap Package - 시스템 아키텍처 =
+
+{{info}}
+**문서 버전**: 2.0
+**패키지 버전**: v1.1.0
+**최종 업데이트**: 2025-10-22
+**대상**: 시스템 설계자, 아키텍트, 인프라 관리자
+{{/info}}
+
+----
+
+== 목차 ==
+
+{{toc depth="3"/}}
+
+----
+
+== 1. 프로젝트 개요 ==
+
+{{panel title="Windows 에어갭 환경용 Nginx 리버스 프록시 통합 설치 패키지"}}
+오프라인 Windows Server 환경에서 Nginx 기반 리버스 프록시를 완전 자동 설치하고 관리하기 위한 통합 솔루션입니다.
+
+**핵심 특징**:
+* 완전 오프라인 설치 (133MB → 75MB 압축)
+* USB 전송 기반 에어갭 배포
+* 3가지 프록시 관리 옵션
+* Active Directory 통합
+* 자동화된 운영 스크립트 (v1.1.0)
+{{/panel}}
+
+----
+
+== 2. 시스템 아키텍처 ==
+
+=== 2.1 전체 구조도 ===
+
+{{code language="none"}}
+┌─────────────────────────────────────────────────────────────┐
+│ Windows Server (에어갭 환경)                                 │
+│                                                               │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │ Nginx       │  │ Node.js      │  │ Active       │       │
+│  │ 1.24.0      │  │ v20.11.0     │  │ Directory    │       │
+│  │             │  │              │  │              │       │
+│  │ Port: 80    │  │ Web UI:      │  │ LDAP Auth    │       │
+│  │       443   │  │ 8080         │  │ Groups       │       │
+│  └─────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
+│        │                  │                  │               │
+│        └──────────────────┴──────────────────┘               │
+│                           │                                  │
+│  ┌────────────────────────┴────────────────────────┐        │
+│  │ NSSM (Windows Service Manager)                  │        │
+│  │ - nginx.service                                  │        │
+│  │ - nginx-web-ui.service                           │        │
+│  └──────────────────────────────────────────────────┘        │
+└─────────────────────────────────────────────────────────────┘
+{{/code}}
+
+=== 2.2 컴포넌트 계층 구조 ===
+
+{{code language="none"}}
+Presentation Layer (프레젠테이션 계층)
+├── Web UI (Node.js) - Port 8080
+│   └── localhost-only 바인딩 (보안)
+└── Zoraxy GUI (옵션) - Port 8000
+
+Application Layer (애플리케이션 계층)
+├── Nginx Reverse Proxy - Port 80/443
+│   ├── HTTP/HTTPS 요청 처리
+│   ├── 프록시 룰 매칭
+│   └── 업스트림 전달
+└── PowerShell Management Scripts
+    ├── 설치 스크립트 (01-06)
+    └── 운영 스크립트 (07-10)
+
+Service Layer (서비스 계층)
+├── NSSM Service Manager
+│   ├── nginx.service
+│   └── nginx-web-ui.service
+└── Active Directory Integration
+    ├── LDAP Authentication
+    └── Group-based Authorization
+
+Infrastructure Layer (인프라 계층)
+├── Node.js Runtime v20.11.0
+├── Visual C++ Redistributable 2015-2022
+└── Windows Server 2016/2019/2022
+{{/code}}
+
+----
+
+== 3. 구성 요소 상세 ==
+
+=== 3.1 핵심 컴포넌트 ===
+
+|=컴포넌트|=버전|=역할|=포트|=크기
+|**Nginx**|1.24.0|리버스 프록시 엔진|80, 443|1.7MB
+|**Node.js**|v20.11.0|웹 UI 런타임|8080|26MB
+|**NSSM**|2.24|Windows 서비스 관리|-|344KB
+|**Visual C++**|2015-2022|Node.js 의존성|-|25MB
+
+=== 3.2 옵션 컴포넌트 ===
+
+|=컴포넌트|=용도|=특징|=크기
+|**Zoraxy**|GUI 프록시 관리|독립 실행형, Windows 네이티브|80MB
+
+{{warning}}
+**Zoraxy 사용 시 주의사항**:
+* Nginx와 별도로 동작 (독립형)
+* 설정 파일 동기화 필요
+* 포트 충돌 방지 (8000번 사용)
+{{/warning}}
+
+----
+
+== 4. 데이터 흐름 ==
+
+=== 4.1 HTTP 요청 처리 흐름 ===
+
+{{code language="none"}}
+┌─────────────────────────────────────────────────────┐
+│                                                       │
+│  외부 클라이언트                                     │
+│       │                                               │
+│       │ HTTP Request (app.company.local)            │
+│       ↓                                               │
+│  ┌─────────────────┐                                │
+│  │ Nginx (Port 80) │                                │
+│  └────────┬────────┘                                │
+│           │                                           │
+│           │ 1. Host 헤더 매칭                        │
+│           ↓                                           │
+│  ┌──────────────────────┐                           │
+│  │ nginx.conf/conf.d/   │                           │
+│  │ 프록시 룰 검색       │                           │
+│  └──────────┬───────────┘                           │
+│             │                                         │
+│             │ 2. upstream 서버 전달                  │
+│             ↓                                         │
+│  ┌──────────────────────┐                           │
+│  │ 192.168.1.100:3000   │                           │
+│  │ (실제 애플리케이션)  │                           │
+│  └──────────┬───────────┘                           │
+│             │                                         │
+│             │ 3. 응답 반환                           │
+│             ↓                                         │
+│  ┌─────────────────┐                                │
+│  │ Nginx           │                                │
+│  │ (응답 프록시)   │                                │
+│  └────────┬────────┘                                │
+│           │                                           │
+│           │ 4. HTTP Response                         │
+│           ↓                                           │
+│  외부 클라이언트                                     │
+│                                                       │
+└─────────────────────────────────────────────────────┘
+{{/code}}
+
+=== 4.2 프록시 설정 흐름 ===
+
+{{panel title="3가지 관리 옵션"}}
+**옵션 1: PowerShell 스크립트**
+
+{{code language="none"}}
+CSV 파일 (services.csv)
+    ↓
+import-proxies.ps1
+    ↓
+nginx.conf 생성/수정
+    ↓
+Nginx 설정 검증 (nginx -t)
+    ↓
+Nginx 재시작 (nginx -s reload)
+{{/code}}
+
+**옵션 2: Node.js 웹 UI** (추천)
+
+{{code language="none"}}
+브라우저 (localhost:8080)
+    ↓
+REST API 호출
+    ↓
+nginx-web-ui.js 처리
+    ↓
+nginx.conf 수정
+    ↓
+Nginx 재시작
+{{/code}}
+
+**옵션 3: Zoraxy**
+
+{{code language="none"}}
+Zoraxy GUI (독립 실행)
+    ↓
+설정 변경
+    ↓
+Nginx 설정 동기화 (수동)
+{{/code}}
+
+{{info}}
+**권장 사항**: 기존 nginx.conf 유지 필요 시 **옵션 2 (Node.js 웹 UI)** 사용
+{{/info}}
+{{/panel}}
+
+----
+
+== 5. Active Directory 통합 ==
+
+=== 5.1 AD 구조 ===
+
+{{code language="none"}}
+Domain: company.local
+│
+├── OU=Service Accounts
+│   └── CN=nginx-service
+│       ├── 계정 유형: 서비스 계정
+│       ├── 권한: 로컬 관리자 (Nginx 서버)
+│       └── 용도: Nginx/Web UI 서비스 실행
+│
+└── OU=Security Groups
+    ├── CN=NginxAdministrators
+    │   ├── 유형: Domain Global Group
+    │   ├── 멤버: 시스템 관리자
+    │   └── 권한: Full Control
+    │
+    └── CN=NginxOperators
+        ├── 유형: Domain Global Group
+        ├── 멤버: 운영자
+        └── 권한: Read + Execute
+{{/code}}
+
+=== 5.2 권한 모델 ===
+
+|=그룹|=권한 레벨|=허용 작업|=거부 작업
+|**NginxAdministrators**|Full Control|프록시 추가/삭제/수정, 서비스 재시작, 설정 변경, SSL 관리|없음
+|**NginxOperators**|Read + Execute|상태 조회, 로그 확인, 프록시 추가만|프록시 삭제, 서비스 재시작, SSL 접근
+
+=== 5.3 인증 흐름 ===
+
+{{code language="none"}}
+사용자 로그인 (domain\username)
+    ↓
+Active Directory 인증
+    ↓
+그룹 멤버십 확인
+    ↓
+┌─────────────────────┬──────────────────────┐
+│ NginxAdministrators │ NginxOperators       │
+│ (전체 권한)         │ (제한 권한)          │
+└─────────────────────┴──────────────────────┘
+    ↓                       ↓
+웹 UI 접근 허용         읽기 전용 접근
+{{/code}}
+
+----
+
+== 6. 보안 아키텍처 ==
+
+=== 6.1 네트워크 보안 ===
+
+{{panel title="Windows Firewall 규칙"}}
+{{code language="none"}}
+┌──────────────────────────────────────┐
+│ Inbound Rules                         │
+├──────────────────────────────────────┤
+│ ✅ ALLOW: 80/tcp (HTTP)               │
+│ ✅ ALLOW: 443/tcp (HTTPS)             │
+│ ❌ DENY:  8080/tcp (외부 → 웹 UI)    │
+│ ✅ ALLOW: 8080/tcp (127.0.0.1만)     │
+└──────────────────────────────────────┘
+{{/code}}
+
+{{success}}
+**보안 원칙**: 웹 UI는 localhost-only 바인딩으로 외부 접근 차단
+{{/success}}
+{{/panel}}
+
+=== 6.2 파일 시스템 권한 ===
+
+|=경로|=NginxAdministrators|=NginxOperators|=nginx-service
+|C:\nginx\conf\|Read/Write|Read|Read
+|C:\nginx\logs\|Read/Write|Read|Read/Write
+|C:\nginx\html\|Read/Write|Read|Read
+|C:\nginx\ssl\|Full Control|Deny|Read
+
+{{warning}}
+**SSL 인증서 보안**:
+* `C:\nginx\ssl\` 디렉토리는 Administrators만 접근
+* Private Key 파일은 암호화 권장
+* 정기적인 인증서 갱신 필요
+{{/warning}}
+
+=== 6.3 서비스 보안 ===
+
+{{panel title="서비스 실행 계정 설정"}}
+**계정**: `company\nginx-service`
+**권한**:
+* 로컬 관리자 그룹 멤버
+* "서비스로 로그온" 권한
+* 포트 바인딩 권한 (80, 443, 8080)
+* 파일 시스템 읽기/쓰기 권한
+
+**감사 로깅**:
+* 모든 설정 변경 기록
+* 서비스 시작/중지 이벤트
+* 로그인 시도 추적
+{{/panel}}
+
+----
+
+== 7. 디렉토리 구조 ==
+
+{{code language="none"}}
+C:\
+│
+├── nginx\                      # Nginx 설치 디렉토리
+│   ├── conf\
+│   │   ├── nginx.conf         # 메인 설정 (worker_processes 등)
+│   │   ├── mime.types         # MIME 타입 정의
+│   │   └── conf.d\            # 프록시 설정 디렉토리
+│   │       ├── app.company.local.conf
+│   │       ├── api.company.local.conf
+│   │       └── ...
+│   │
+│   ├── logs\
+│   │   ├── access.log         # HTTP 액세스 로그
+│   │   ├── error.log          # Nginx 에러 로그
+│   │   └── archived\          # 로테이션된 로그 (압축)
+│   │
+│   ├── html\                  # 기본 웹 루트
+│   │   ├── index.html
+│   │   ├── 50x.html           # 에러 페이지
+│   │   └── assets\
+│   │
+│   ├── ssl\                   # SSL 인증서
+│   │   ├── *.crt              # 공개 인증서
+│   │   ├── *.key              # 개인 키 (보안!)
+│   │   └── dhparam.pem        # DH 파라미터
+│   │
+│   ├── temp\                  # 임시 파일
+│   ├── client_body_temp\
+│   ├── proxy_temp\
+│   ├── fastcgi_temp\
+│   └── uwsgi_temp\
+│
+├── airgap-package\             # 설치 패키지
+│   ├── installers\            # 설치 파일들 (132MB)
+│   │   ├── nginx-1.24.0.zip
+│   │   ├── node-v20.11.0-x64.msi
+│   │   ├── nssm-2.24.zip
+│   │   ├── vcredist_x64.exe
+│   │   └── zoraxy_windows_amd64.exe
+│   │
+│   ├── scripts\               # 관리 스크립트
+│   │   ├── 01-prepare-airgap.ps1
+│   │   ├── 02-install-airgap.ps1
+│   │   ├── 03-verify-installation.ps1
+│   │   ├── 04-setup-ad-integration.ps1
+│   │   ├── 05-backup-restore.ps1
+│   │   ├── 06-validate-enhanced-package.ps1
+│   │   ├── 07-health-monitor.ps1         ⭐ NEW (v1.1.0)
+│   │   ├── 08-log-analyzer.ps1           ⭐ NEW (v1.1.0)
+│   │   ├── 09-performance-benchmark.ps1  ⭐ NEW (v1.1.0)
+│   │   ├── 10-auto-maintenance.ps1       ⭐ NEW (v1.1.0)
+│   │   ├── import-proxies.ps1            ⭐ NEW (v1.1.0)
+│   │   ├── nginx-web-ui.js
+│   │   └── nginx-web-ui-basic.js
+│   │
+│   ├── configs\
+│   │   ├── .env.example
+│   │   ├── services.csv               # 프록시 일괄 등록 템플릿
+│   │   └── nginx/
+│   │       ├── nginx.conf
+│   │       └── conf.d/
+│   │           ├── example-app.company.local.conf
+│   │           ├── example-loadbalancer.conf
+│   │           └── example-static-site.conf
+│   │
+│   ├── docs\                  # 문서 (228KB)
+│   │   ├── 000_INDEX.xwiki            ⭐ NEW (메인 인덱스)
+│   │   ├── 001-010_*.md/*.xwiki
+│   │   ├── 011_ARCHITECTURE.xwiki     ⭐ NEW (현재 문서)
+│   │   ├── 012_API-REFERENCE.xwiki
+│   │   ├── 013_DEPLOYMENT-GUIDE.xwiki
+│   │   ├── 014_TROUBLESHOOTING.xwiki
+│   │   ├── architecture.md
+│   │   ├── api.md
+│   │   ├── deployment.md
+│   │   └── troubleshooting.md
+│   │
+│   ├── npm-packages\          # 오프라인 npm 캐시
+│   │   └── package.json
+│   │
+│   ├── logs\                  # 설치 로그
+│   │   └── install-*.log
+│   │
+│   └── checksums.txt          # SHA256 체크섬
+
+└── Program Files\
+    └── nodejs\                # Node.js 런타임
+        ├── node.exe
+        ├── npm
+        └── node_modules\
+{{/code}}
+
+----
+
+== 8. 확장성 설계 ==
+
+=== 8.1 수평 확장 (Scale Out) ===
+
+{{panel title="다중 Nginx 서버 구성"}}
+{{code language="none"}}
+┌──────────────────────────────────────────┐
+│ Load Balancer (F5 / HAProxy / Azure LB)  │
+│              (VIP: 10.0.0.100)            │
+└───────────────────┬──────────────────────┘
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+        ↓           ↓           ↓
+┌───────────┐ ┌───────────┐ ┌───────────┐
+│ Nginx #1  │ │ Nginx #2  │ │ Nginx #3  │
+│ 10.0.1.11 │ │ 10.0.1.12 │ │ 10.0.1.13 │
+└───────────┘ └───────────┘ └───────────┘
+      │             │             │
+      └─────────────┴─────────────┘
+                    │
+        설정 파일 동기화 (Robocopy / DFS-R)
+                    │
+        ┌───────────┴───────────┐
+        ↓                       ↓
+┌─────────────┐         ┌─────────────┐
+│ File Server │         │ Git Repo    │
+│ (Master)    │         │ (Version)   │
+└─────────────┘         └─────────────┘
+{{/code}}
+
+**설정 동기화 방법**:
+1. **Robocopy** (Windows 기본)
+   {{code language="powershell"}}
+   robocopy \\fileserver\nginx-config C:\nginx\conf /MIR /MON:1
+   {{/code}}
+
+2. **DFS-R** (Distributed File System Replication)
+   * 자동 양방향 동기화
+   * 충돌 해결 메커니즘
+
+3. **Git + Scheduled Task**
+   {{code language="powershell"}}
+   git pull origin master
+   nginx -t && nginx -s reload
+   {{/code}}
+{{/panel}}
+
+=== 8.2 수직 확장 (Scale Up) ===
+
+|=리소스|=기본값|=권장값 (고부하)|=최대값
+|**Worker Processes**|1|CPU 코어 수|16
+|**Worker Connections**|1024|8192|65536
+|**Keepalive Timeout**|65s|30s (고속 환경)|120s
+|**Client Body Buffer**|128k|256k|1m
+
+{{info}}
+**Nginx 성능 튜닝 예시** (nginx.conf):
+{{code language="nginx"}}
+worker_processes  auto;  # CPU 코어 수 자동 감지
+worker_rlimit_nofile 65535;
+
+events {
+    worker_connections  8192;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    keepalive_timeout  30;
+    keepalive_requests 100;
+
+    client_body_buffer_size 256k;
+    client_max_body_size 100m;
+
+    # 프록시 버퍼링
+    proxy_buffering on;
+    proxy_buffer_size 4k;
+    proxy_buffers 8 4k;
+}
+{{/code}}
+{{/info}}
+
+----
+
+== 9. 모니터링 통합 (Future Roadmap) ==
+
+=== 9.1 Prometheus Metrics (계획 중) ===
+
+{{panel title="수집 예정 메트릭"}}
+|=메트릭 이름|=설명|=타입
+|nginx_http_requests_total|총 HTTP 요청 수|Counter
+|nginx_http_request_duration_seconds|요청 처리 시간|Histogram
+|nginx_upstream_response_time_seconds|업스트림 응답 시간|Histogram
+|nginx_connections_active|현재 활성 연결 수|Gauge
+|nginx_connections_accepted|수락된 연결 수|Counter
+|nginx_connections_handled|처리된 연결 수|Counter
+
+**Exporter**: nginx-prometheus-exporter
+{{/panel}}
+
+=== 9.2 로그 수집 파이프라인 (계획 중) ===
+
+{{code language="none"}}
+┌─────────────┐
+│ Nginx Logs  │
+│ - access    │
+│ - error     │
+└──────┬──────┘
+       │
+       │ tail -f
+       ↓
+┌──────────────┐
+│ Promtail     │
+│ (Log Agent)  │
+└──────┬───────┘
+       │
+       │ Push
+       ↓
+┌──────────────┐       ┌──────────────┐
+│ Loki         │←─────→│ Grafana      │
+│ (Log Store)  │ Query │ (Dashboard)  │
+└──────────────┘       └──────────────┘
+{{/code}}
+
+=== 9.3 현재 모니터링 (v1.1.0) ===
+
+{{success}}
+**실시간 모니터링 스크립트 제공**:
+* `07-health-monitor.ps1` - CPU, 메모리, 디스크, 서비스 상태
+* `08-log-analyzer.ps1` - 로그 분석 및 보안 이벤트 탐지
+* `09-performance-benchmark.ps1` - RPS 및 응답 시간 측정
+
+{{code language="powershell"}}
+# 대시보드 모드 실행
+.\07-health-monitor.ps1 -DashboardMode -AutoRecover
+
+# 24시간 로그 분석
+.\08-log-analyzer.ps1 -AnalysisType Daily -ExportReport
+
+# 성능 벤치마크
+.\09-performance-benchmark.ps1 -Profile Standard -GenerateReport
+{{/code}}
+{{/success}}
+
+----
+
+== 10. 재해 복구 (Disaster Recovery) ==
+
+=== 10.1 백업 전략 ===
+
+{{panel title="3-Tier 백업 정책"}}
+**Tier 1: 일일 백업** (Local)
+* 대상: 설정 파일 (`C:\nginx\conf\`)
+* 보관 기간: 7일
+* 저장 위치: `D:\Backups\nginx\daily\`
+
+**Tier 2: 주간 백업** (Network)
+* 대상: 전체 시스템 (설정 + 로그)
+* 보관 기간: 4주
+* 저장 위치: `\\fileserver\backups\nginx\weekly\`
+
+**Tier 3: 월간 백업** (Offsite)
+* 대상: 전체 시스템 + 데이터베이스
+* 보관 기간: 12개월
+* 저장 위치: Azure Blob Storage / Tape
+
+{{code language="powershell"}}
+# 백업 스크립트
+.\05-backup-restore.ps1 -Mode Backup -BackupPath "D:\Backups\nginx"
+
+# 자동화 (Task Scheduler)
+Register-ScheduledTask -TaskName "Nginx Daily Backup" `
+    -Action (New-ScheduledTaskAction -Execute "PowerShell.exe" `
+        -Argument "-File C:\airgap-package\scripts\05-backup-restore.ps1 -Mode Backup") `
+    -Trigger (New-ScheduledTaskTrigger -Daily -At 02:00AM)
+{{/code}}
+{{/panel}}
+
+=== 10.2 복구 절차 ===
+
+{{code language="none"}}
+재해 발생
+    ↓
+1. 새 서버 준비 (Windows Server 설치)
+    ↓
+2. 에어갭 패키지 설치
+   .\02-install-airgap.ps1
+    ↓
+3. 백업에서 복구
+   .\05-backup-restore.ps1 -Mode Restore -BackupPath "D:\Backups\nginx\2025-10-21"
+    ↓
+4. 검증
+   .\03-verify-installation.ps1 -Detailed
+    ↓
+5. 서비스 시작
+   Start-Service nginx, nginx-web-ui
+    ↓
+6. 연결 테스트
+   Invoke-WebRequest http://app.company.local
+{{/code}}
+
+**목표 복구 시간 (RTO)**: 30분
+**목표 복구 시점 (RPO)**: 24시간
+
+----
+
+== 11. 버전 정보 ==
+
+|=항목|=값
+|**패키지 버전**|v1.1.0
+|**릴리스 날짜**|2025-10-21
+|**문서 버전**|2.0 (XWiki 고도화)
+|**지원 OS**|Windows Server 2016/2019/2022
+|**아키텍처**|x64
+|**지원 기간**|2025-10-21 ~ 2026-10-21 (1년)
+
+{{info}}
+**v1.1.0 아키텍처 변경사항**:
+* 5개 운영 자동화 스크립트 추가
+* 프로젝트 구조 재편성 (symbolic links)
+* XWiki 문서 고도화
+* 패키지 압축 최적화 (133MB → 75MB)
+{{/info}}
+
+----
+
+== 12. 참고 문서 ==
+
+{{panel}}
+**관련 문서**:
+* [[메인 인덱스>>doc:000_INDEX]] - 전체 문서 네비게이션
+* [[배포 가이드>>doc:013_DEPLOYMENT-GUIDE]] - 설치 및 배포 절차
+* [[API 레퍼런스>>doc:012_API-REFERENCE]] - REST API 및 PowerShell 인터페이스
+* [[운영 트리 가이드>>doc:010_OPERATIONS-TREE-GUIDE]] - 일일 운영 절차
+* [[문제 해결>>doc:014_TROUBLESHOOTING]] - 일반적인 문제 해결
+
+**외부 참조**:
+* Nginx 공식 문서: https://nginx.org/en/docs/
+* Node.js 문서: https://nodejs.org/docs/
+* NSSM 문서: https://nssm.cc/usage
+{{/panel}}
+
+----
+
+**문서 작성**: Air-Gap Integration Team
+**최종 검토**: 2025-10-22
+**다음 업데이트**: v1.2.0 릴리스 시
